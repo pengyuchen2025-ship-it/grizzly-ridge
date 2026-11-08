@@ -207,6 +207,7 @@ export function buildCity(ctx) {
     const x0 = bx0 + 2.2, x1 = bx1 - 2.2, z0 = bz0 + 2.2, z1 = bz1 - 2.2;
     const midx = (x0 + x1) / 2, midz = (z0 + z1) / 2;
     if (zone === 'ruins') { buildRuins(x0, x1, z0, z1); continue; }
+    if (zone === 'commercial' && !ctx.gasStation && i > 0 && i < N - 1) { buildGasStation(x0, x1, z0, z1); continue; }
     const centerDist = Math.hypot(midx, midz);
     if (zone !== 'downtown' && Math.random() < 0.1 && centerDist > 25) { parkingLot(x0, x1, z0, z1); continue; }
     const lots = [];
@@ -327,6 +328,24 @@ export function buildCity(ctx) {
   }
 
   // ---------------------------------------------------------------- special lots
+  function buildGasStation(x0, x1, z0, z1) {
+    const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2, g = new THREE.Group(); g.position.set(cx, 0, cz); cityGroup.add(g);
+    const pad = new THREE.Mesh(new THREE.PlaneGeometry(x1 - x0, z1 - z0), L(0x34353a)); pad.rotation.x = -Math.PI / 2; pad.position.y = 0.2; g.add(pad);
+    const red = L(0xc0262c), white = L(0xe8e4da), dark = L(0x2a2c30);
+    const canopy = merged([box(13, 0.9, 9, 0, 5.6, 0)], white); g.add(canopy);
+    const stripe = merged([box(13.1, 0.35, 9.1, 0, 5.3, 0)], red); g.add(stripe);
+    const cols = merged([box(0.5, 5.2, 0.5, -5, 2.6, -3), box(0.5, 5.2, 0.5, 5, 2.6, -3), box(0.5, 5.2, 0.5, -5, 2.6, 3), box(0.5, 5.2, 0.5, 5, 2.6, 3)], white); g.add(cols);
+    const pumps = merged([box(0.9, 1.7, 0.6, -2.5, 1.05, 0), box(0.9, 1.7, 0.6, 2.5, 1.05, 0), box(4.2, 0.25, 1.2, -2.5, 0.32, 0).translate(2.5, 0, 0), box(4.2, 0.25, 1.2, 0, 0.32, 0).translate(-2.5, 0, 0)], red); g.add(pumps);
+    const under = new THREE.Mesh(new THREE.PlaneGeometry(12, 8), new THREE.MeshBasicMaterial({ color: 0xfff2d8 })); under.material.color.multiplyScalar(1.6); under.rotation.x = Math.PI / 2; under.position.y = 5.14; g.add(under);
+    const shop = merged([box(7, 4, 5, 0, 2, (z1 - z0) / 2 - 3.5)], white); g.add(shop);
+    const { tex, aspect } = signTex('GAS', '#ff3a3a'); const sign = new THREE.Mesh(new THREE.PlaneGeometry(4 * aspect / 3, 1.6), new THREE.MeshBasicMaterial({ map: tex })); sign.material.color.setScalar(1.3); sign.position.set(0, 6.6, 4.55); g.add(sign);
+    const pole = merged([box(0.4, 9, 0.4, (x1 - x0) / 2 - 1, 4.5, -(z1 - z0) / 2 + 1)], dark); g.add(pole);
+    const { tex: t2 } = signTex('GRIZZLY GAS', '#ffcf3a'); const big = new THREE.Mesh(new THREE.BoxGeometry(5, 2, 0.4), new THREE.MeshBasicMaterial({ map: t2 })); big.material.color.setScalar(1.3); big.position.set((x1 - x0) / 2 - 1, 9.5, -(z1 - z0) / 2 + 1); g.add(big);
+    addLight(0xfff0d0, 120, 22, cx, 4.5, cz);
+    ctx.gasStation = { x: cx, z: cz, group: g, exploded: false };
+    // shop building is climbable
+    buildings.push({ minX: cx - 3.5, maxX: cx + 3.5, minZ: cz + (z1 - z0) / 2 - 6, maxZ: cz + (z1 - z0) / 2 - 1, top: 4, base: 0, mesh: shop, mats: [], fade: 1 });
+  }
   function parkingLot(x0, x1, z0, z1) {
     const lot = new THREE.Mesh(new THREE.PlaneGeometry(x1 - x0, z1 - z0), L(0x2b2c30)); lot.rotation.x = -Math.PI / 2; lot.position.set((x0 + x1) / 2, 0.19, (z0 + z1) / 2); cityGroup.add(lot);
     const lines = []; for (let x = x0 + 1; x < x1 - 1; x += 3) lines.push(box(0.12, 0.02, 4, x, 0.2, z0 + 2.5), box(0.12, 0.02, 4, x, 0.2, z1 - 2.5));
@@ -365,7 +384,7 @@ export function buildCity(ctx) {
         headGeos.push(box(0.7, 0.18, 0.4, x + ax * 1.5, 6.3, z + az * 1.5));
         const cg = new THREE.PlaneGeometry(7, 7); cg.rotateX(-Math.PI / 2); cg.translate(x + ax * 1.5, 0.22, z + az * 1.5); coneGeos.push(cg);
         lampPositions.push(new THREE.Vector3(x + ax * 1.5, 6, z + az * 1.5));
-        if (Math.random() < 0.15) hydrantGeos.push(cyl(0.22, 0.25, 0.8, 6, x + az * 2, 0.55, z + ax * 2), cyl(0.28, 0.28, 0.12, 6, x + az * 2, 0.95, z + ax * 2));
+        if (Math.random() < 0.15) { hydrantGeos.push(cyl(0.22, 0.25, 0.8, 6, x + az * 2, 0.55, z + ax * 2), cyl(0.28, 0.28, 0.12, 6, x + az * 2, 0.95, z + ax * 2)); ctx.hydrants.push({ x: x + az * 2, z: z + ax * 2, burst: false }); }
         if (Math.random() < 0.12) binGeos.push(cyl(0.35, 0.3, 1.0, 7, x + az * 3, 0.68, z + ax * 3));
         if (Math.random() < 0.1) { const g = box(vertical ? 0.5 : 2, 0.12, vertical ? 2 : 0.5, x + az * 4, 0.65, z + ax * 4); benchGeos.push(g, box(vertical ? 0.1 : 2, 0.6, vertical ? 2 : 0.1, x + az * 4 - (vertical ? side * 0.25 : 0), 0.95, z + ax * 4 - (vertical ? 0 : side * 0.25))); }
       }

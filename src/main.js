@@ -272,11 +272,11 @@ const buildings = [];
 const SPAWN = new V3(LINES[1], 0, LINES[N - 1]); // 住宅区路口（远离市中心高楼）
 const cityGroup = new THREE.Group(); scene.add(cityGroup);
 
-const cityCtx = { parkingSpots: [], fireSpots: [], barricadeSpots: [] };
+const cityCtx = { parkingSpots: [], fireSpots: [], barricadeSpots: [], hydrants: [], gasStation: null };
 let cityFx = null;
 const cityEffects = [];
 function buildCity() {
-  cityFx = buildCityScene({ scene, cityGroup, buildings, LINES, N, ROAD, HALF, ...cityCtx });
+  cityFx = buildCityScene(Object.assign(cityCtx, { scene, cityGroup, buildings, LINES, N, ROAD, HALF }));
   for (const p of cityCtx.fireSpots) fire(p.clone(), Infinity, cityEffects);
 }
 
@@ -453,6 +453,28 @@ function glassBurst(px, py, pz, nx, nz, b) {
   Sfx.glass();
 }
 
+// ---------------------------------------------------------------- street destructibles
+const waterMat = new THREE.PointsMaterial({ color: 0xbfe4ff, size: 0.35, transparent: true, depthWrite: false, opacity: 0.8 });
+function hydrantSpray(h) {
+  const n = 60, geo = new THREE.BufferGeometry(), a = new Float32Array(n * 3), seed = Array.from({ length: n }, () => [Math.random(), rand(-1, 1), rand(-1, 1)]);
+  geo.setAttribute('position', new THREE.BufferAttribute(a, 3)); const pts = new THREE.Points(geo, waterMat); pts.frustumCulled = false; scene.add(pts);
+  effects.push({ life: 9, max: 9, update(dt) { for (let i = 0; i < n; i++) { const s = seed[i]; s[0] = (s[0] + dt * 1.4) % 1; const t = s[0]; a[i * 3] = h.x + s[1] * t * 1.5; a[i * 3 + 1] = 1 + 9 * t - 11 * t * t; a[i * 3 + 2] = h.z + s[2] * t * 1.5; } geo.attributes.position.needsUpdate = true; }, dispose() { scene.remove(pts); geo.dispose(); } });
+  Sfx.squelch(); floatText(new V3(h.x, 2, h.z), '哗——', '');
+}
+function updateStreetProps() {
+  const pp = player.pos, pr = player.r;
+  if (pp.y - pr > 2) return;
+  for (const h of cityCtx.hydrants) if (!h.burst && Math.hypot(h.x - pp.x, h.z - pp.z) < pr + 0.4) { h.burst = true; hydrantSpray(h); }
+  const g = cityCtx.gasStation;
+  if (g && !g.exploded && Math.hypot(g.x - pp.x, g.z - pp.z) < pr + 5) {
+    g.exploded = true; centerMsg('加油站爆炸！', '', 2200);
+    const at = (dx, dz, sc, delay) => setTimeout(() => { if (!state.running) return; const p = new V3(g.x + dx, 1, g.z + dz); explosion(p, sc); Sfx.boom(); fire(p.clone().setY(0), Infinity, cityEffects); blast(p, 14); shake = 1.6; }, delay);
+    at(-2.5, 0, 2.2, 0); at(2.5, 0, 2.6, 350); at(0, 0, 3.4, 750);
+    setTimeout(() => { g.group.traverse((o) => { if (o.isMesh) o.material = MAT.wreck; }); g.group.children.forEach((c, i) => { if (i > 0 && i < 6) c.rotation.z = rand(-0.4, 0.4); }); }, 800);
+    state.carsCrushed += 3; grow(PLAYER.carVolume * 2);
+  }
+}
+
 // ---------------------------------------------------------------- floating text & messages
 function floatText(worldPos, text, cls = '') {
   tmpV.copy(worldPos).project(camera);
@@ -615,6 +637,7 @@ function resetGame() {
   for (const h of helis) { scene.remove(h.mesh); h.spot.intensity = 0; h.spot.userData.busy = false; }
   civilians = []; cops = []; cars = []; helis = [];
   buildings.forEach((b) => { b.survivors = 0; });
+  cityCtx.hydrants.forEach((h) => { h.burst = false; });
   effects.splice(0).forEach((e) => e.dispose());
   player.attached = [];
   Object.assign(player, { r: PLAYER.startRadius, targetR: PLAYER.startRadius, hp: PLAYER.maxHp, grounded: true, climbing: false });
@@ -1024,7 +1047,7 @@ function frame() {
   if (state.running) {
     dt *= state.slowmo;
     state.t += dt;
-    if (!state.over) { updatePlayer(dt); updateWaves(dt); }
+    if (!state.over) { updatePlayer(dt); updateWaves(dt); updateStreetProps(); }
     updatePeople(dt, civilians, false);
     updatePeople(dt, cops, true);
     updateCars(dt);
@@ -1049,5 +1072,5 @@ function frame() {
   const start = () => { Sfx.init(); $('start-screen').classList.add('hidden'); $('result-screen').classList.add('hidden'); resetGame(); };
   $('start-btn').addEventListener('click', start);
   $('restart-btn').addEventListener('click', start);
-  window.__game = { state, player, start, get civilians() { return civilians; }, get cops() { return cops; }, get cars() { return cars; }, get helis() { return helis; }, stick };
+  window.__game = { state, player, start, gas: cityCtx.gasStation, get civilians() { return civilians; }, get cops() { return cops; }, get cars() { return cars; }, get helis() { return helis; }, stick };
 })();
