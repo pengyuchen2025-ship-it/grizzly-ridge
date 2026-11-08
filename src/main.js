@@ -115,6 +115,9 @@ const Sfx = (() => {
     boom() { noise(1.4, 1200, 0.7, 1.4, 'lowpass', 40); tone(70, 0.9, 0.7, 'sine', 25); },
     jump() { tone(140, 0.25, 0.25, 'triangle', 320); },
     hit() { noise(0.08, 500, 2, 0.35, 'bandpass'); },
+    glass() { noise(0.25, 5200, 1.2, 0.35, 'highpass'); tone(rand(2400, 3600), 0.12, 0.08, 'triangle'); tone(rand(3000, 4200), 0.18, 0.06, 'triangle'); },
+    slam(p = 1) { noise(0.5 + p * 0.3, 380, 0.8, 0.7 + p * 0.4, 'lowpass', 40); tone(55, 0.4 + p * 0.2, 0.5 + p * 0.3, 'sine', 30); },
+    squelch() { noise(0.25, 700, 3, 0.6, 'lowpass', 150); },
     bump() { tone(90, 0.18, 0.3, 'square', 60); },
     alert() { tone(520, 0.18, 0.25, 'square'); setTimeout(() => tone(760, 0.3, 0.25, 'square'), 180); },
     setLoops(siren, heli) {
@@ -365,6 +368,87 @@ rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPos, 3));
 const rain = new THREE.LineSegments(rainGeo, new THREE.LineBasicMaterial({ color: 0x8aa0c8, transparent: true, opacity: 0.35 }));
 rain.frustumCulled = false; scene.add(rain);
 
+// ---------------------------------------------------------------- gore & impact fx
+const bloodMat = new THREE.PointsMaterial({ color: 0x9a0d14, size: 0.42, transparent: true, depthWrite: false });
+function bloodBurst(pos, n = 46, power = 1) {
+  const geo = new THREE.BufferGeometry(); const a = new Float32Array(n * 3); const vel = [];
+  for (let i = 0; i < n; i++) { a.set([pos.x, pos.y, pos.z], i * 3); vel.push(new V3(rand(-1, 1), rand(0.3, 1.4), rand(-1, 1)).multiplyScalar(rand(3, 9) * power)); }
+  geo.setAttribute('position', new THREE.BufferAttribute(a, 3));
+  const mat = bloodMat.clone(); const pts = new THREE.Points(geo, mat); pts.frustumCulled = false; scene.add(pts);
+  const floor = pos.y - 1.2;
+  effects.push({ life: 1.1, max: 1.1, update(dt) {
+    for (let i = 0; i < n; i++) { const v = vel[i]; if (a[i * 3 + 1] <= floor) continue; v.y -= 26 * dt; a[i * 3] += v.x * dt; a[i * 3 + 1] = Math.max(floor, a[i * 3 + 1] + v.y * dt); a[i * 3 + 2] += v.z * dt; }
+    geo.attributes.position.needsUpdate = true; mat.opacity = Math.min(1, this.life * 2);
+  }, dispose() { scene.remove(pts); geo.dispose(); mat.dispose(); } });
+}
+const poolTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d');
+  x.fillStyle = 'rgba(110,8,14,0.95)'; for (let i = 0; i < 9; i++) { x.beginPath(); x.ellipse(32 + rand(-14, 14), 32 + rand(-14, 14), rand(6, 16), rand(5, 12), rand(0, 3), 0, 7); x.fill(); }
+  for (let i = 0; i < 14; i++) { x.beginPath(); x.arc(32 + rand(-28, 28), 32 + rand(-28, 28), rand(1, 3), 0, 7); x.fill(); }
+  x.fillStyle = 'rgba(200,40,40,0.35)'; x.beginPath(); x.ellipse(28, 28, 8, 5, 0.5, 0, 7); x.fill();
+  const t = new THREE.CanvasTexture(c); t.magFilter = THREE.NearestFilter; return t; })();
+const pools = [];
+function bloodPool(x, z, y = 0.22, size = 2.4) {
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: poolTex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
+  m.rotation.x = -Math.PI / 2; m.rotation.z = rand(0, 6.28); m.position.set(x, y, z); m.scale.setScalar(0.01); scene.add(m);
+  pools.push(m); if (pools.length > 60) { const old = pools.shift(); scene.remove(old); }
+  effects.push({ life: 40, max: 40, update() { const age = this.max - this.life; m.scale.setScalar(size * Math.min(1, age * 3)); m.material.opacity = Math.min(1, this.life / 6); },
+    dispose() { scene.remove(m); m.material.dispose(); const k = pools.indexOf(m); if (k >= 0) pools.splice(k, 1); } });
+}
+function absorbVictim(mesh) {
+  // dragged into the monster's core: spin, shrink, gone
+  const start = mesh.position.clone(); const s0 = mesh.scale.x; const spin = rand(8, 14);
+  effects.push({ life: 0.28, max: 0.28, update(dt) {
+    const k = 1 - this.life / this.max; mesh.position.lerpVectors(start, player.pos, k * k); mesh.position.y += Math.sin(k * Math.PI) * 1.2;
+    mesh.rotation.x += dt * spin; mesh.scale.setScalar(s0 * (1 - k * 0.85));
+  }, dispose() { scene.remove(mesh); } });
+}
+const crackTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 128; const x = c.getContext('2d');
+  x.strokeStyle = 'rgba(12,10,10,0.9)'; x.lineCap = 'round';
+  for (let i = 0; i < 14; i++) { let px = 64, py = 64, a = (i / 14) * 6.28 + rand(-0.2, 0.2); x.lineWidth = rand(2, 4); x.beginPath(); x.moveTo(px, py);
+    for (let j = 0; j < 6; j++) { a += rand(-0.5, 0.5); px += Math.cos(a) * rand(6, 12); py += Math.sin(a) * rand(6, 12); x.lineTo(px, py); x.lineWidth *= 0.8; } x.stroke(); }
+  x.fillStyle = 'rgba(15,12,12,0.85)'; x.beginPath(); x.arc(64, 64, 14, 0, 7); x.fill();
+  const t = new THREE.CanvasTexture(c); t.magFilter = THREE.NearestFilter; return t; })();
+const ringMat = new THREE.MeshBasicMaterial({ color: 0xc9bfae, transparent: true, depthWrite: false, side: THREE.DoubleSide });
+function smash(x, y, z, power, landing) {
+  const crack = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: crackTex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3 }));
+  crack.rotation.x = -Math.PI / 2; crack.rotation.z = rand(0, 6.28); crack.position.set(x, y + 0.23, z); crack.scale.setScalar(player.r * (landing ? 3.4 : 2.2) * power); scene.add(crack);
+  effects.push({ life: 6, max: 6, update() { crack.material.opacity = Math.min(1, this.life / 2); }, dispose() { scene.remove(crack); crack.material.dispose(); } });
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.85, 1, 40), ringMat.clone()); ring.rotation.x = -Math.PI / 2; ring.position.set(x, y + 0.4, z); scene.add(ring);
+  const R = player.r * (landing ? 6 : 3.5) * power;
+  effects.push({ life: 0.55, max: 0.55, update() { const k = 1 - this.life / this.max; ring.scale.setScalar(0.5 + R * k); ring.material.opacity = 0.75 * (1 - k); }, dispose() { scene.remove(ring); ring.material.dispose(); } });
+  // dust & rocks
+  const n = landing ? 14 : 8, rocks = [];
+  for (let i = 0; i < n; i++) { const m = new THREE.Mesh(new THREE.BoxGeometry(rand(0.2, 0.5), rand(0.2, 0.4), rand(0.2, 0.5)), MAT.wreck); const a = rand(0, 6.28);
+    m.position.set(x + Math.cos(a) * player.r, y + 0.3, z + Math.sin(a) * player.r); scene.add(m); rocks.push({ m, v: new V3(Math.cos(a) * rand(4, 9), rand(5, 11) * power, Math.sin(a) * rand(4, 9)) }); }
+  effects.push({ life: 1.2, max: 1.2, update(dt) { for (const r of rocks) { r.v.y -= 30 * dt; r.m.position.addScaledVector(r.v, dt); r.m.rotation.x += dt * 9; if (r.m.position.y < y + 0.2) { r.m.position.y = y + 0.2; r.v.set(0, 0, 0); } } }, dispose() { rocks.forEach((r) => scene.remove(r.m)); } });
+  shake = Math.max(shake, (landing ? 0.7 : 0.3) * power);
+  Sfx.slam(landing ? power : 0.3);
+  if (landing) { // knock people down, bounce cars
+    const KR = R * 0.9;
+    for (const e of [...civilians, ...cops]) { const d = Math.hypot(e.pos.x - x, e.pos.z - z); if (d < KR && Math.abs(y - e.pos.y) < 3) { e.knock = rand(1.4, 2.2); } }
+    for (const c of cars) { if (c.state === 'wreck' || c.state === 'flying') continue; const d = Math.hypot(c.pos.x - x, c.pos.z - z); if (d < KR && y < 2) c.hop = 0.5; }
+  }
+}
+const holeTex = (() => { const c = document.createElement('canvas'); c.width = 32; c.height = 40; const x = c.getContext('2d');
+  x.fillStyle = '#07080a'; x.beginPath(); x.moveTo(4, 6); for (let i = 0; i < 12; i++) { const a = (i / 12) * 6.28; x.lineTo(16 + Math.cos(a) * rand(9, 15), 20 + Math.sin(a) * rand(12, 19)); } x.closePath(); x.fill();
+  x.strokeStyle = 'rgba(200,225,245,0.8)'; x.lineWidth = 1; for (let i = 0; i < 7; i++) { x.beginPath(); x.moveTo(16, 20); const a = rand(0, 6.28); x.lineTo(16 + Math.cos(a) * 16, 20 + Math.sin(a) * 20); x.stroke(); }
+  const t = new THREE.CanvasTexture(c); t.magFilter = THREE.NearestFilter; return t; })();
+const shardMat = new THREE.PointsMaterial({ color: 0xd8f0ff, size: 0.3, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+const holes = [];
+function glassBurst(px, py, pz, nx, nz, b) {
+  const y = clamp(py, b.base + 1.2, b.top - 1.2);
+  const hole = new THREE.Mesh(new THREE.PlaneGeometry(1.6 * Math.min(2, player.r * 0.7), 2 * Math.min(2, player.r * 0.7)), new THREE.MeshBasicMaterial({ map: holeTex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
+  hole.position.set(px + nx * 0.06, y, pz + nz * 0.06); hole.rotation.y = Math.atan2(nx, nz); scene.add(hole);
+  holes.push(hole); if (holes.length > 160) scene.remove(holes.shift());
+  const n = 26, geo = new THREE.BufferGeometry(), a = new Float32Array(n * 3), vel = [];
+  for (let i = 0; i < n; i++) { a.set([px + nx * 0.3, y + rand(-0.6, 0.6), pz + nz * 0.3], i * 3); vel.push(new V3(nx * rand(3, 8) + rand(-2, 2), rand(0, 4), nz * rand(3, 8) + rand(-2, 2))); }
+  geo.setAttribute('position', new THREE.BufferAttribute(a, 3));
+  const mat = shardMat.clone(); const pts = new THREE.Points(geo, mat); pts.frustumCulled = false; scene.add(pts);
+  effects.push({ life: 1.4, max: 1.4, update(dt) { for (let i = 0; i < n; i++) { vel[i].y -= 22 * dt; a[i * 3] += vel[i].x * dt; a[i * 3 + 1] = Math.max(0.2, a[i * 3 + 1] + vel[i].y * dt); a[i * 3 + 2] += vel[i].z * dt; } geo.attributes.position.needsUpdate = true; mat.opacity = Math.min(1, this.life); },
+    dispose() { scene.remove(pts); geo.dispose(); mat.dispose(); } });
+  Sfx.glass();
+}
+
 // ---------------------------------------------------------------- floating text & messages
 function floatText(worldPos, text, cls = '') {
   tmpV.copy(worldPos).project(camera);
@@ -549,6 +633,8 @@ function updatePlayer(dt) {
     if (vn < 0) { player.vel.x -= vn * contact.nx; player.vel.z -= vn * contact.nz; }
     if (inp.mag > 0.2 && (inp.x * contact.nx + inp.z * contact.nz) < -0.35) {
       player.climbing = true;
+      player.glassT = (player.glassT || 0) - dt;
+      if (player.glassT <= 0 && contact.b) { player.glassT = 0.14; const cx = player.pos.x - contact.nx * r * 0.92, cz = player.pos.z - contact.nz * r * 0.92; glassBurst(cx, player.pos.y + rand(-r * 0.4, r * 0.4), cz, contact.nx, contact.nz, contact.b); }
       if (!state.toldClimb) { state.toldClimb = true; centerMsg('爬墙中…', '一直往前推就能爬上楼顶', 1500); }
     }
   }
@@ -558,6 +644,7 @@ function updatePlayer(dt) {
   if (wantJump && (player.grounded || player.climbing)) {
     player.vel.y = PLAYER.jumpSpeed + r * PLAYER.jumpPerRadius;
     if (player.climbing && contact) { player.vel.x += contact.nx * 6; player.vel.z += contact.nz * 6; }
+    else smash(player.pos.x, player.pos.y - r, player.pos.z, 0.7, false);
     Sfx.jump();
   }
   wantJump = false;
@@ -568,13 +655,14 @@ function updatePlayer(dt) {
   const wasAir = !player.grounded;
   player.grounded = false;
   if (player.pos.y - r <= g) {
-    if (wasAir && player.vel.y < -18) { shake = Math.max(shake, 0.35); Sfx.bump(); }
+    if (wasAir && player.vel.y < -14) smash(player.pos.x, g, player.pos.z, clamp(-player.vel.y / 22, 0.7, 2.2), true);
     player.pos.y = g + r; if (player.vel.y < 0) player.vel.y = 0; player.grounded = true;
   }
 
   // visuals: roll + scale
   player.root.position.copy(player.pos);
-  player.roll.scale.setScalar(r);
+  player.gulp = Math.max(0, (player.gulp || 0) - dt);
+  player.roll.scale.setScalar(r * (1 + Math.sin(player.gulp * 18) * player.gulp * 0.5));
   const hv = Math.hypot(player.vel.x, player.vel.z);
   if (hv > 0.05) {
     tmpV.set(player.vel.z, 0, -player.vel.x).normalize();
@@ -603,12 +691,15 @@ function updatePeople(dt, list, isCop) {
       state.eaten++;
       grow(PLAYER.personVolume);
       const heal = Math.min(PLAYER.healPerPerson, PLAYER.maxHp - player.hp); player.hp += heal;
-      attachVictim(e.mesh);
-      Sfx.eat();
+      absorbVictim(e.mesh);
+      bloodBurst(tmpV.copy(e.pos).setY(e.pos.y + 1.1), 46, 1); bloodPool(e.pos.x, e.pos.z, e.pos.y + 0.22, rand(2, 3.2));
+      player.gulp = 0.35;
+      Sfx.eat(); Sfx.squelch();
       floatText(tmpV2.copy(pp).setY(pp.y + pr + 0.5), heal > 0 ? `+${Math.round(heal)} ❤` : '吞噬!', heal > 0 ? 'heal' : '');
       if (!isCop) setTimeout(() => { if (state.running) spawnPerson(Math.random() < 0.5 ? 'man' : 'woman'); }, 1500);
       continue;
     }
+    if (e.knock > 0) { e.knock -= dt; e.mesh.rotation.x = -Math.PI / 2 * Math.min(1, (2.2 - e.knock) * 6); e.pos.y = 0.3; if (e.knock <= 0) e.mesh.rotation.x = 0; continue; }
     e.t -= dt;
     let speed;
     if (isCop) {
@@ -656,6 +747,7 @@ function updateCars(dt) {
       continue;
     }
     if (c.state === 'wreck') continue;
+    if (c.hop > 0) { c.hop -= dt; c.pos.y = Math.max(0, Math.sin((1 - c.hop / 0.5) * Math.PI) * 1.3); if (c.hop <= 0) c.pos.y = 0; }
     // police driving
     if (c.police) {
       c.flash += dt * 6;
