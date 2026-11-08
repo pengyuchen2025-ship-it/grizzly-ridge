@@ -6,8 +6,8 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { buildCity as buildCityScene } from './city.js?v=20261108101839';
-import { GAME, PLAYER, WAVES, CIVILIANS, POLICE, HELI, MODELS, TRAFFIC } from './config.js?v=20261108101839';
+import { buildCity as buildCityScene } from './city.js?v=20261108102344';
+import { GAME, PLAYER, WAVES, CIVILIANS, POLICE, HELI, MODELS, TRAFFIC } from './config.js?v=20261108102344';
 
 // ---------------------------------------------------------------- utils
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -85,8 +85,8 @@ const Sfx = (() => {
     }
     // swap the synthesized loops for the recorded ones
     const loopTo = (group, dest, vol) => { if (!B[group]) return false; const src = ctx.createBufferSource(); src.buffer = B[group][0]; src.loop = true; const g = ctx.createGain(); g.gain.value = vol; src.connect(g); g.connect(dest); src.start(0, Math.random() * B[group][0].duration); return true; };
-    if (loopTo('siren', sirenNode, 1)) synthOut.siren.gain.value = 0;
-    if (loopTo('heli', heliNode, 1.4)) synthOut.heli.gain.value = 0;
+    if (loopTo('siren', sirenNode, 8)) synthOut.siren.gain.value = 0;   // recording is much quieter than the synth tone
+    if (loopTo('heli', heliNode, 1.8)) synthOut.heli.gain.value = 0;
     if (loopTo('rain', dry, 0.35)) synthOut.rain.gain.value = 0;
   }
   // play a random sample from a group; returns false if not loaded yet (caller then falls back to synthesis)
