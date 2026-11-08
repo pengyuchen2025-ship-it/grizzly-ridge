@@ -6,8 +6,8 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { buildCity as buildCityScene } from './city.js?v=20261108092937';
-import { GAME, PLAYER, WAVES, CIVILIANS, POLICE, HELI, MODELS, TRAFFIC } from './config.js?v=20261108092937';
+import { buildCity as buildCityScene } from './city.js?v=20261108094247';
+import { GAME, PLAYER, WAVES, CIVILIANS, POLICE, HELI, MODELS, TRAFFIC } from './config.js?v=20261108094247';
 
 // ---------------------------------------------------------------- utils
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -1005,6 +1005,28 @@ function damage(n) {
   player.hp -= n; vignetteT = 0.25; Sfx.hit();
   if (player.hp <= 0) { player.hp = 0; gameOver(); }
 }
+const RANKS = [[0, '街头怪谈'], [400, '午夜惊魂'], [900, '城市噩梦'], [1800, '灰岭末日'], [3200, '天灾级生物']];
+function showResult(t, score, best) {
+  const fmt = (v) => `${Math.floor(v / 60)}:${String(Math.floor(v % 60)).padStart(2, '0')}`;
+  const rank = RANKS.filter(([s]) => score >= s).pop()[1];
+  const fallen = state.helisDown >= 2 || state.eaten >= 60 || state.carsCrushed >= 12;
+  $('res-headline').textContent = fallen ? '灰岭市已沦陷' : '怪物被击毙';
+  $('res-sub').textContent = fallen ? `怪物肆虐 ${fmt(t)} 后倒下 · 城市已成废墟` : `怪物在 ${fmt(t)} 后被警方击倒 · 残骸仍在搜寻中`;
+  $('res-rank').textContent = rank;
+  $('res-record').classList.toggle('hidden', !(score > best));
+  $('res-best').textContent = score > best ? (best ? `打破了之前的最高分 ${best}` : '首次记录') : `本机最高分 ${best}`;
+  $('res-ticker').innerHTML = [`灰岭市怪物袭击造成 ${state.eaten} 人失踪`, `${state.carsCrushed} 辆汽车被摧毁`, `${state.helisDown} 架直升机坠毁`, `威胁评级：${rank}`, '市政府宣布进入紧急状态'].join('<i>■</i>');
+  const targets = [['r-eaten', state.eaten], ['r-cars', state.carsCrushed], ['r-helis', state.helisDown], ['r-size', +player.r.toFixed(1)], ['res-score', score]];
+  const t0 = performance.now(), D = 1300;
+  (function tick(now) {
+    const k = Math.min(1, (now - t0) / D), e = 1 - Math.pow(1 - k, 3);
+    $('r-time').textContent = fmt(t * e);
+    for (const [id, v] of targets) $(id).textContent = Number.isInteger(v) ? Math.round(v * e) : (v * e).toFixed(1);
+    if (k < 1) requestAnimationFrame(tick);
+  })(t0);
+  document.body.classList.add('menu');
+  $('result-screen').classList.remove('hidden');
+}
 function gameOver() {
   state.over = true; state.slowmo = 0.25;
   explosion(player.pos.clone(), 1.4);
@@ -1012,8 +1034,7 @@ function gameOver() {
     state.running = false;
     const t = Math.floor(state.t), score = state.eaten * 10 + state.carsCrushed * 60 + state.helisDown * 250 + t * 2;
     let best = 0; try { best = +localStorage.getItem('greyridge-best') || 0; if (score > best) { localStorage.setItem('greyridge-best', score); } } catch (e) {}
-    $('result-stats').innerHTML = `存活 <b>${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}</b><br>吞噬 <b>${state.eaten}</b> 人 · 压爆 <b>${state.carsCrushed}</b> 辆车 · 击落 <b>${state.helisDown}</b> 架直升机<br>得分 <b>${score}</b>${score > best ? ' · 新纪录！' : (best ? ` · 最高 ${best}` : '')}`;
-    $('result-screen').classList.remove('hidden');
+    showResult(t, score, best);
   }, 1600);
 }
 
@@ -1028,11 +1049,18 @@ function segHitsBox(ax, az, bx, bz, b) {
 }
 function updateCamera(dt) {
   const r = player.r;
+  if (!state.running) { // menus: slow cinematic orbit around the monster
+    const a = cityT * 0.12, R = 9 + r * 3;
+    camera.position.lerp(tmpV.set(player.pos.x + Math.cos(a) * R, player.pos.y + 4 + r * 1.5, player.pos.z + Math.sin(a) * R), Math.min(1, dt * 2));
+    camera.lookAt(player.pos.x, player.pos.y + r * 0.4, player.pos.z);
+    player.root.position.copy(player.pos);
+  } else {
   const back = 8 + r * 2.4, up = 22 + r * 4.6;
   const target = tmpV.set(player.pos.x, player.pos.y + up, player.pos.z + back);
   camera.position.lerp(target, Math.min(1, dt * 4));
   if (shake > 0) { camera.position.x += rand(-1, 1) * shake; camera.position.y += rand(-1, 1) * shake; shake = Math.max(0, shake - dt * 2.5); }
   camera.lookAt(player.pos.x, player.pos.y + r * 0.3, player.pos.z);
+  }
   moon.position.set(player.pos.x + 30, 70, player.pos.z + 20); moon.target.position.copy(player.pos);
   for (const b of buildings) {
     const hit = b.top > player.pos.y - r + 1 && segHitsBox(camera.position.x, camera.position.z, player.pos.x, player.pos.z + r, { minX: b.minX - 2.5, maxX: b.maxX + 2.5, minZ: b.minZ - 2.5, maxZ: b.maxZ + 2.5 });
@@ -1113,8 +1141,8 @@ function frame() {
   try { const v = new URL(import.meta.url).searchParams.get('v'); if (v && v.length >= 12) { const hh = (parseInt(v.slice(8, 10), 10) + 8) % 24; ver = ` · 版本 ${String(hh).padStart(2, '0')}:${v.slice(10, 12)}`; } } catch (e) {}
   $('loading').textContent = (Object.keys(templates).length ? `已载入 Hi3D 模型 ${Object.keys(templates).length} 个` : '模型由 Hi3D 生成 · 占位模型显示中') + ver;
   frame();
-  const start = () => { Sfx.init(); $('start-screen').classList.add('hidden'); $('result-screen').classList.add('hidden'); resetGame(); };
+  const start = () => { Sfx.init(); document.body.classList.remove('menu'); $('start-screen').classList.add('hidden'); $('result-screen').classList.add('hidden'); resetGame(); };
   $('start-btn').addEventListener('click', start);
   $('restart-btn').addEventListener('click', start);
-  window.__game = { state, player, start, gas: cityCtx.gasStation, get civilians() { return civilians; }, get cops() { return cops; }, get cars() { return cars; }, get helis() { return helis; }, stick };
+  window.__gameOverTest = () => damage(9999); window.__game = { state, player, start, gas: cityCtx.gasStation, get civilians() { return civilians; }, get cops() { return cops; }, get cars() { return cars; }, get helis() { return helis; }, stick };
 })();

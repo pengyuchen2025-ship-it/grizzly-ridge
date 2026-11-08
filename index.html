@@ -32,18 +32,62 @@
   .float { position:fixed; pointer-events:none; font-weight:900; font-size:18px; color:#fff; text-shadow:0 2px 0 #000; animation: floatUp .9s ease-out forwards; white-space:nowrap; }
   .float.heal { color:#7dff8a; } .float.boom { color:var(--amber); font-size:24px; } .float.dmg { color:#ff6a6a; }
   @keyframes floatUp { from { transform:translate(-50%,0) scale(1.15); opacity:1; } to { transform:translate(-50%,-60px) scale(.9); opacity:0; } }
-  .screen { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:24px;
-    background:radial-gradient(ellipse at center, rgba(40,6,10,.72), rgba(4,4,8,.94)); z-index:10; }
-  .screen h1 { font-size:clamp(44px,10vw,96px); margin:0; letter-spacing:8px; color:#fff; text-shadow:0 0 24px #b3121d, 0 4px 0 #000; }
-  .screen .sub { opacity:.85; margin:10px 0 26px; letter-spacing:2px; }
-  .screen .keys { font-size:14px; opacity:.8; line-height:1.9; margin-bottom:24px; }
-  .screen .keys kbd { display:inline-block; min-width:24px; padding:1px 6px; border:1px solid #888; border-bottom-width:3px; border-radius:4px; font-family:inherit; background:#14161c; }
-  .btn { pointer-events:auto; font:inherit; font-size:20px; font-weight:900; letter-spacing:4px; padding:14px 42px; background:var(--red); color:#fff; border:3px solid #000;
-    box-shadow:0 5px 0 #000, 0 0 30px rgba(224,48,58,.5); cursor:pointer; }
-  .btn:active { transform:translateY(3px); box-shadow:0 2px 0 #000; }
-  .credit { position:absolute; bottom:16px; font-size:12px; opacity:.55; letter-spacing:1px; }
-  #result-stats { font-size:18px; line-height:2; margin:8px 0 26px; }
-  #result-stats b { color:var(--amber); font-size:24px; }
+  /* ================= menus: emergency broadcast / breaking news ================= */
+  body.menu .hud, body.menu #touch-jump { display:none !important; }
+  .screen { position:fixed; inset:0; z-index:10; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:56px 16px 64px;
+    background: radial-gradient(ellipse 70% 60% at 50% 45%, rgba(20,0,4,.05) 0%, rgba(8,4,8,.55) 55%, rgba(3,3,6,.92) 100%); overflow:hidden; }
+  .screen::after { content:""; position:absolute; inset:0; pointer-events:none; background: repeating-linear-gradient(0deg, rgba(0,0,0,.18) 0 1px, transparent 1px 3px); mix-blend-mode:multiply; }
+  .bar-top { position:absolute; top:0; left:0; right:0; display:flex; align-items:center; gap:12px; padding:10px 16px; background:linear-gradient(90deg,#b3121d,#7a0a12); color:#fff;
+    font-weight:900; letter-spacing:3px; font-size:13px; box-shadow:0 4px 24px rgba(179,18,29,.45); z-index:2; }
+  .bar-top .dot { width:10px; height:10px; border-radius:50%; background:#fff; animation: blink 1s steps(2) infinite; }
+  .bar-top .live { margin-left:auto; border:1.5px solid #fff; padding:1px 8px; font-size:11px; }
+  @keyframes blink { 50% { opacity:.15; } }
+  .kicker { color:#ffb02e; font-weight:800; letter-spacing:6px; font-size:clamp(12px,2.2vw,16px); margin-bottom:8px; text-shadow:0 2px 0 #000; }
+  .glitch { position:relative; margin:0; font-size:clamp(64px,15vw,150px); line-height:1; font-weight:900; letter-spacing:.08em; color:#f4efe6;
+    text-shadow: 0 0 30px rgba(224,48,58,.75), 0 6px 0 #000; animation: flick 4s infinite; }
+  .glitch::before, .glitch::after { content:attr(data-text); position:absolute; inset:0; overflow:hidden; }
+  .glitch::before { color:#ff2a3a; transform:translate(-4px,0); clip-path: inset(0 0 62% 0); animation: g1 2.6s infinite steps(1); mix-blend-mode:screen; }
+  .glitch::after  { color:#2ad8ff; transform:translate(4px,0);  clip-path: inset(58% 0 0 0); animation: g2 3.1s infinite steps(1); mix-blend-mode:screen; }
+  @keyframes g1 { 0%,86%{ transform:translate(-3px,0); clip-path:inset(0 0 62% 0);} 88%{ transform:translate(-12px,2px); clip-path:inset(20% 0 50% 0);} 92%{ transform:translate(8px,-2px); clip-path:inset(60% 0 10% 0);} 96%{ transform:translate(-3px,0);} }
+  @keyframes g2 { 0%,80%{ transform:translate(3px,0); clip-path:inset(58% 0 0 0);} 83%{ transform:translate(10px,1px); clip-path:inset(30% 0 40% 0);} 90%{ transform:translate(-8px,0); clip-path:inset(75% 0 5% 0);} 95%{ transform:translate(3px,0);} }
+  @keyframes flick { 0%,92%,100% { opacity:1 } 93% { opacity:.55 } 94% { opacity:1 } 96% { opacity:.7 } }
+  .en { font-family: Impact, "Arial Black", sans-serif; letter-spacing:.55em; color:#c9c2b6; font-size:clamp(14px,2.6vw,22px); margin:10px 0 0 .55em; opacity:.85; }
+  .cards { display:grid; grid-template-columns: repeat(4, minmax(0, 150px)); gap:12px; margin:34px 0 30px; }
+  .card { background:rgba(12,10,14,.72); border:1px solid rgba(255,255,255,.12); border-top:3px solid #e0303a; padding:14px 10px 12px; backdrop-filter: blur(3px); }
+  .card svg { width:34px; height:34px; display:block; margin:0 auto 8px; }
+  .card b { display:block; font-size:16px; letter-spacing:2px; color:#fff; }
+  .card span { display:block; font-size:12px; opacity:.7; margin-top:4px; }
+  .card kbd { display:inline-block; padding:0 5px; margin:0 1px; border:1px solid #8a8a8a; border-bottom-width:2px; border-radius:3px; font-family:inherit; font-size:11px; background:#16181d; }
+  .touch-only { display:none !important; } @media (pointer:coarse) { .touch-only { display:block !important; } .desk-only { display:none !important; } }
+  .btn-start { pointer-events:auto; position:relative; font:inherit; font-size:clamp(20px,3.6vw,26px); font-weight:900; letter-spacing:.4em; padding:16px 48px 16px calc(48px + .4em);
+    background:linear-gradient(180deg,#ef3a44,#a3101a); color:#fff; border:2px solid #ff8a8f; cursor:pointer; box-shadow:0 0 0 4px rgba(0,0,0,.6), 0 0 40px rgba(224,48,58,.65); animation: pulse 1.6s ease-in-out infinite; }
+  .btn-start:hover { filter:brightness(1.12); } .btn-start:active { transform:translateY(2px); }
+  @keyframes pulse { 50% { box-shadow:0 0 0 4px rgba(0,0,0,.6), 0 0 70px rgba(255,60,70,.9); } }
+  .foot { margin-top:18px; font-size:12px; letter-spacing:1px; opacity:.6; position:relative; z-index:2; }
+  .ticker { position:absolute; left:0; right:0; bottom:0; height:38px; display:flex; align-items:center; background:rgba(8,8,10,.92); border-top:2px solid #e0303a; overflow:hidden; z-index:2; }
+  .ticker .lbl { flex:none; height:100%; display:flex; align-items:center; padding:0 14px; background:#e0303a; color:#fff; font-weight:900; letter-spacing:2px; font-size:13px; z-index:1; }
+  .ticker .run { white-space:nowrap; font-size:14px; color:#e9e4da; padding-left:100%; animation: crawl 38s linear infinite; }
+  .ticker .run i { font-style:normal; color:#ffb02e; margin:0 18px; }
+  @keyframes crawl { to { transform:translateX(-100%); } }
+  /* result */
+  #result-screen { background: radial-gradient(ellipse 70% 60% at 50% 40%, rgba(60,0,6,.35) 0%, rgba(20,0,4,.78) 60%, rgba(4,2,4,.95) 100%); }
+  .breaking { display:flex; align-items:stretch; margin-bottom:14px; transform:skewX(-8deg); box-shadow:0 6px 30px rgba(0,0,0,.6); }
+  .breaking .a { background:#e0303a; color:#fff; font-weight:900; letter-spacing:4px; padding:6px 16px; font-size:15px; }
+  .breaking .b { background:#f4efe6; color:#111; font-weight:900; font-family: Impact, "Arial Black", sans-serif; letter-spacing:3px; padding:6px 14px; font-size:15px; }
+  #res-headline { margin:0; font-size:clamp(40px,9vw,88px); font-weight:900; color:#fff; letter-spacing:.06em; text-shadow:0 0 30px rgba(224,48,58,.7), 0 5px 0 #000; }
+  #res-sub { margin-top:8px; opacity:.8; letter-spacing:2px; font-size:clamp(13px,2.2vw,16px); }
+  .rank { margin:18px 0 6px; display:inline-flex; gap:10px; align-items:center; border:1px solid rgba(255,176,46,.6); padding:6px 16px; background:rgba(30,18,4,.6); }
+  .rank span { font-size:12px; letter-spacing:3px; color:#ffb02e; } .rank b { font-size:22px; letter-spacing:4px; color:#ffd27a; }
+  .stats { display:grid; grid-template-columns: repeat(5, minmax(0, 132px)); gap:10px; margin:18px 0 16px; }
+  .stat { background:rgba(10,8,10,.75); border:1px solid rgba(255,255,255,.1); border-bottom:3px solid #e0303a; padding:12px 6px; }
+  .stat b { display:block; font-size:clamp(24px,4vw,34px); font-weight:900; color:#fff; font-variant-numeric:tabular-nums; }
+  .stat span { font-size:12px; letter-spacing:2px; opacity:.7; }
+  .score { font-size:16px; letter-spacing:3px; margin-bottom:6px; }
+  .score b { font-size:clamp(40px,7vw,60px); color:#ffb02e; margin-left:10px; font-variant-numeric:tabular-nums; text-shadow:0 0 24px rgba(255,176,46,.5); }
+  .badge { display:inline-block; margin-left:10px; vertical-align:middle; background:#ffb02e; color:#111; font-weight:900; padding:3px 10px; letter-spacing:2px; font-size:13px; transform:rotate(-6deg); animation: pop .5s ease-out; }
+  @keyframes pop { from { transform:scale(2) rotate(-6deg); opacity:0; } }
+  #res-best { font-size:12px; opacity:.6; margin-bottom:22px; letter-spacing:1px; }
+  @media (max-width: 720px) { .bc-en { display:none; } .cards { grid-template-columns: repeat(2, minmax(0, 160px)); } .stats { grid-template-columns: repeat(3, minmax(0, 110px)); } .screen { justify-content:flex-start; padding-top:64px; overflow-y:auto; } }
   .hidden { display:none !important; }
   #touch-jump { position:fixed; right:22px; bottom:26px; width:84px; height:84px; border-radius:50%; background:rgba(224,48,58,.35); border:3px solid rgba(255,255,255,.5);
     color:#fff; font-weight:900; font-size:18px; display:none; align-items:center; justify-content:center; z-index:5; }
@@ -54,7 +98,7 @@
   @media (pointer:coarse) { #mute { bottom:auto; top:90px; } }
 </style>
 </head>
-<body>
+<body class="menu">
 <canvas id="game"></canvas>
 <div id="vignette"></div>
 
@@ -79,21 +123,38 @@
 <button id="mute" title="静音 (M)">🔊</button>
 
 <div class="screen" id="start-screen">
-  <h1>灰岭之夜</h1>
-  <div class="sub">病毒爆发之夜，你是那只怪物</div>
-  <div class="keys">
-    <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / 方向键 滚动 · <kbd>空格</kbd> 跳跃 · 贴着墙往前推 = 爬墙<br>
-    吞下路人变大、回血 · 长得够大就能压爆警车 · 爬上楼顶跳起来撞毁直升机<br>
-    手机：左边拖动移动，右下角按钮跳跃 · <kbd>P</kbd> 切换像素化
+  <div class="bar-top"><i class="dot"></i>紧急广播<span class="bc-en"> · EMERGENCY BROADCAST</span><span class="live">LIVE</span></div>
+  <div class="kicker">病毒爆发之夜 · 你就是那只怪物</div>
+  <h1 class="glitch" data-text="灰岭之夜">灰岭之夜</h1>
+  <div class="en">GRIZZLY RIDGE</div>
+  <div class="cards">
+    <div class="card"><svg viewBox="0 0 24 24" fill="none" stroke="#ff5a63" stroke-width="2"><circle cx="11" cy="13" r="7"/><path d="M11 6a7 7 0 0 1 7 7"/><path d="M19 4l1 4-4 1"/></svg><b>滚动吞噬</b><span class="desk-only"><kbd>WASD</kbd> / <kbd>方向键</kbd></span><span class="touch-only">屏幕上拖动</span></div>
+    <div class="card"><svg viewBox="0 0 24 24" fill="none" stroke="#ff5a63" stroke-width="2"><path d="M12 20V6"/><path d="M6 11l6-6 6 6"/><path d="M4 22h16"/></svg><b>跳跃砸地</b><span class="desk-only"><kbd>空格</kbd></span><span class="touch-only">右下角按钮</span></div>
+    <div class="card"><svg viewBox="0 0 24 24" fill="none" stroke="#ff5a63" stroke-width="2"><rect x="13" y="2" width="8" height="20"/><path d="M15 6h4M15 10h4M15 14h4"/><circle cx="8" cy="15" r="3"/><path d="M8 11V5M5 8l3-3 3 3"/></svg><b>爬墙上楼</b><span>贴着墙继续推</span></div>
+    <div class="card"><svg viewBox="0 0 24 24" fill="none" stroke="#ff5a63" stroke-width="2"><path d="M3 17h18l-2-5H5z"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/><path d="M8 9l2-4M12 8V3M16 9l-2-4"/></svg><b>压爆车辆</b><span>吃够人变大之后</span></div>
   </div>
-  <button class="btn" id="start-btn">开 始</button>
-  <div class="credit" id="loading">加载中…</div>
+  <button class="btn-start" id="start-btn">开始吞噬</button>
+  <div class="foot" id="loading">加载中…</div>
+  <div class="ticker"><div class="lbl">快讯</div><div class="run">灰岭市发生不明生物袭击，目击者称其“由许多人体融合而成”<i>■</i>市政府呼吁市民立即撤离，切勿靠近市中心<i>■</i>警方已封锁主要路口，直升机正在空中搜索<i>■</i>本台记者正在现场直播<i>■</i>请勿尝试与该生物接触</div></div>
 </div>
 
 <div class="screen hidden" id="result-screen">
-  <h1 style="font-size:clamp(36px,8vw,72px)">你倒下了</h1>
-  <div id="result-stats"></div>
-  <button class="btn" id="restart-btn">再来一次</button>
+  <div class="bar-top"><i class="dot"></i>灰岭电视台<span class="bc-en"> · GRTV NEWS</span><span class="live">LIVE</span></div>
+  <div class="breaking"><span class="a">突发新闻</span><span class="b">BREAKING NEWS</span></div>
+  <h2 id="res-headline">灰岭市已沦陷</h2>
+  <div id="res-sub"></div>
+  <div class="rank"><span>威胁评级</span><b id="res-rank">城市噩梦</b></div>
+  <div class="stats">
+    <div class="stat"><b id="r-time">0:00</b><span>存活时间</span></div>
+    <div class="stat"><b id="r-eaten">0</b><span>吞噬人数</span></div>
+    <div class="stat"><b id="r-cars">0</b><span>压爆车辆</span></div>
+    <div class="stat"><b id="r-helis">0</b><span>击落直升机</span></div>
+    <div class="stat"><b id="r-size">0</b><span>最终体积</span></div>
+  </div>
+  <div class="score">得分<b id="res-score">0</b><span id="res-record" class="badge hidden">新纪录</span></div>
+  <div id="res-best"></div>
+  <button class="btn-start" id="restart-btn">再来一次</button>
+  <div class="ticker"><div class="lbl">快讯</div><div class="run" id="res-ticker"></div></div>
 </div>
 
 <script type="importmap">
@@ -102,6 +163,6 @@
   "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
 } }
 </script>
-<script type="module" src="src/main.js?v=20261108092937"></script>
+<script type="module" src="src/main.js?v=20261108094247"></script>
 </body>
 </html>
