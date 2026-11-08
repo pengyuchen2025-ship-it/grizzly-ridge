@@ -14,11 +14,11 @@ export const GAME = {
 export const PLAYER = {
   startRadius: 1.25,      // 初始半径
   maxHp: 100,
-  personVolume: 0.42,     // 吞一个人增加的“体积”
-  carVolume: 2.2,         // 压爆一辆车增加的体积
-  heliVolume: 4.0,
-  healPerPerson: 7,       // 吃人回血
-  crushRadius: 2.6,       // 达到这个半径才能压爆汽车 / 警车
+  personVolume: 0.9,      // 吞一个人增加的“体积”
+  carVolume: 4.5,         // 压爆一辆车增加的体积
+  heliVolume: 9.0,
+  healPerPerson: 10,      // 吃人回血
+  crushRadius: 2.4,       // 达到这个半径才能压爆汽车 / 警车
   baseSpeed: 10,
   speedPerRadius: 1.4,
   jumpSpeed: 15,
@@ -41,7 +41,7 @@ export const CIVILIANS = { count: 45, fleeRadius: 22, walkSpeed: 2.2, runSpeed: 
 
 export const POLICE = {
   range: 30, keepDistance: 13, speed: 5,
-  fireInterval: 1.1, hitChance: 0.55, damage: 2.6,
+  fireInterval: 1.2, hitChance: 0.4, damage: 2.2,
 };
 
 export const HELI = {

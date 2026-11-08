@@ -908,5 +908,5 @@ function frame() {
   const start = () => { Sfx.init(); $('start-screen').classList.add('hidden'); $('result-screen').classList.add('hidden'); resetGame(); };
   $('start-btn').addEventListener('click', start);
   $('restart-btn').addEventListener('click', start);
-  window.__game = { state, player, start };
+  window.__game = { state, player, start, get civilians() { return civilians; }, get cops() { return cops; }, get cars() { return cars; }, get helis() { return helis; }, stick };
 })();
