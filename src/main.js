@@ -539,6 +539,17 @@ function spawnPerson(kind, near) {
   (kind === 'police' ? cops : civilians).push(e);
   return e;
 }
+const flareMat = new THREE.PointsMaterial({ color: 0xff3020, size: 1.8, map: sparkTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+function spawnSurvivor() {
+  const roofs = buildings.filter((b) => b.top > 7 && b.top < 48 && (b.maxX - b.minX) > 5 && (b.maxZ - b.minZ) > 5 && (b.survivors || 0) < 2 && !buildings.some((o) => o !== b && o.base >= b.top - 0.1 && o.minX >= b.minX && o.maxX <= b.maxX && o.minZ >= b.minZ && o.maxZ <= b.maxZ && Math.abs((o.minX + o.maxX) / 2 - (b.minX + b.maxX) / 2) < 1));
+  if (!roofs.length) return;
+  const b = pick(roofs); b.survivors = (b.survivors || 0) + 1;
+  const mesh = makePerson(Math.random() < 0.5 ? 'man' : 'woman');
+  mesh.position.set(rand(b.minX + 1.5, b.maxX - 1.5), b.top, rand(b.minZ + 1.5, b.maxZ - 1.5)); scene.add(mesh);
+  const e = { kind: 'survivor', mesh, pos: mesh.position, dir: new V3(), t: 0, alive: true, bob: rand(0, 6), roof: b, baseY: b.top };
+  if (Math.random() < 0.45) { const g = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute([0.5, 2.6, 0], 3)); e.flare = new THREE.Points(g, flareMat.clone()); mesh.add(e.flare); }
+  civilians.push(e);
+}
 function spawnParkedCars() {
   for (let i = 0; i < 14; i++) {
     const L = pick(LINES), along = rand(-HALF + 6, HALF - 6), side = Math.random() < 0.5 ? -3.3 : 3.3;
@@ -603,6 +614,7 @@ function resetGame() {
   for (const c of cars) scene.remove(c.mesh);
   for (const h of helis) { scene.remove(h.mesh); h.spot.intensity = 0; h.spot.userData.busy = false; }
   civilians = []; cops = []; cars = []; helis = [];
+  buildings.forEach((b) => { b.survivors = 0; });
   effects.splice(0).forEach((e) => e.dispose());
   player.attached = [];
   Object.assign(player, { r: PLAYER.startRadius, targetR: PLAYER.startRadius, hp: PLAYER.maxHp, grounded: true, climbing: false });
@@ -611,6 +623,7 @@ function resetGame() {
   Object.assign(state, { roadblockWave: -1, running: true, over: false, t: 0, wave: 0, eaten: 0, carsCrushed: 0, helisDown: 0, crushReady: false, toldClimb: false, spawnT: { cop: 5, car: 0, heli: 0 }, slowmo: 1 });
   for (let i = 0; i < CIVILIANS.count; i++) { const e = spawnPerson(Math.random() < 0.5 ? 'man' : 'woman'); if (i < 14) { const p = randomStreetPoint(null); for (let k = 0; k < 30 && Math.hypot(p.x - SPAWN.x, p.z - SPAWN.z) > 26; k++) p.copy(randomStreetPoint(null)); if (Math.hypot(p.x - SPAWN.x, p.z - SPAWN.z) > 6) e.pos.copy(p); } }
   spawnParkedCars();
+  for (let i = 0; i < 12; i++) spawnSurvivor();
   camera.position.set(SPAWN.x, 20, SPAWN.z + 22);
   centerMsg('吞下路人！', '吃人会变大，还能回血');
 }
@@ -722,7 +735,7 @@ function updatePeople(dt, list, isCop) {
     const e = list[i];
     const dx = e.pos.x - pp.x, dz = e.pos.z - pp.z, d = Math.hypot(dx, dz);
     // eaten?
-    if (d < pr + 0.45 && pp.y - pr < 1.6) {
+    if (d < pr + 0.45 && Math.abs(pp.y - pr - (e.baseY || 0)) < 1.8) {
       list.splice(i, 1);
       state.eaten++;
       grow(PLAYER.personVolume);
@@ -732,7 +745,14 @@ function updatePeople(dt, list, isCop) {
       player.gulp = 0.35;
       Sfx.eat(); Sfx.squelch();
       floatText(tmpV2.copy(pp).setY(pp.y + pr + 0.5), heal > 0 ? `+${Math.round(heal)} ❤` : '吞噬!', heal > 0 ? 'heal' : '');
-      if (!isCop) setTimeout(() => { if (state.running) spawnPerson(Math.random() < 0.5 ? 'man' : 'woman'); }, 1500);
+      if (e.roof) { if (e.roof.survivors) e.roof.survivors--; setTimeout(() => { if (state.running) spawnSurvivor(); }, 9000); }
+      else if (!isCop) setTimeout(() => { if (state.running) spawnPerson(Math.random() < 0.5 ? 'man' : 'woman'); }, 1500);
+      if (e.roof && !state.toldRoof) { state.toldRoof = true; centerMsg('屋顶幸存者！', '楼顶上还有更多人在求救', 1800); }
+      continue;
+    }
+    if (e.roof) { // rooftop survivor: jump & wave in place
+      e.bob += dt * 7; e.pos.y = e.baseY + Math.abs(Math.sin(e.bob)) * 0.45; e.mesh.rotation.y += Math.sin(e.bob * 0.5) * dt * 3;
+      if (e.flare) e.flare.material.size = 1.6 + Math.sin(state.t * 23 + e.bob) * 0.5;
       continue;
     }
     if (e.knock > 0) { e.knock -= dt; e.mesh.rotation.x = -Math.PI / 2 * Math.min(1, (2.2 - e.knock) * 6); e.pos.y = 0.3; if (e.knock <= 0) e.mesh.rotation.x = 0; continue; }
@@ -856,7 +876,20 @@ function updateHelis(dt) {
     }
     h.angle += dt * (h.news ? 0.25 : 0.35);
     if (!h.news) { h.alt += Math.sin(state.t * 0.5 + i) * dt * 2; h.alt = clamp(h.alt, HELI.altitudeMin, HELI.altitudeMax); }
-    h.diveT -= dt; if (h.diveT <= 0 && !h.dive) { h.dive = 3.5; h.diveT = rand(7, 12); }
+    h.diveT -= dt; if (!h.news && h.diveT <= 0 && !h.dive) { h.dive = 3.5; h.diveT = rand(7, 12); }
+    if (h.news) { // fly to a rooftop with survivors near the monster and hover low to pick them up
+      if (!h.rescue || !(h.rescue.survivors > 0)) { h.rescue = buildings.filter((b) => b.survivors > 0).sort((a, b) => Math.hypot((a.minX + a.maxX) / 2 - pp.x, (a.minZ + a.maxZ) / 2 - pp.z) - Math.hypot((b.minX + b.maxX) / 2 - pp.x, (b.minZ + b.maxZ) / 2 - pp.z))[0] || null; h.hover = 0; }
+      if (h.rescue) {
+        const b = h.rescue, cx = (b.minX + b.maxX) / 2, cz = (b.minZ + b.maxZ) / 2, ty = b.top + 7.5;
+        h.pos.x += (cx - h.pos.x) * Math.min(1, dt * 0.7); h.pos.z += (cz - h.pos.z) * Math.min(1, dt * 0.7); h.pos.y += (ty - h.pos.y) * Math.min(1, dt * 0.9);
+        h.mesh.rotation.y += dt * 0.3; h.mesh.rotation.z = 0;
+        if (Math.hypot(cx - h.pos.x, cz - h.pos.z) < 3) { h.hover += dt; if (h.hover > 6) { h.hover = 0; const sv = civilians.find((e) => e.roof === b); if (sv) { scene.remove(sv.mesh); civilians.splice(civilians.indexOf(sv), 1); b.survivors--; floatText(tmpV2.copy(sv.pos).setY(sv.pos.y + 2), '幸存者被救走了', ''); setTimeout(() => { if (state.running) spawnSurvivor(); }, 12000); } } }
+        h.spot.position.copy(h.pos).y -= 1; h.spot.target.position.set(cx, b.top, cz);
+        const d3r = h.pos.distanceTo(pp);
+        if (d3r < pr + 4.6) { h.state = 'falling'; h.vy = 4; state.helisDown++; grow(PLAYER.heliVolume); explosion(h.pos.clone(), 1.2); Sfx.boom(); shake = 1.2; floatText(tmpV2.copy(h.pos).setY(h.pos.y + 2), '击落直升机！', 'boom'); centerMsg('直升机坠毁！'); h.spot.intensity = 0; }
+        continue;
+      }
+    }
     let alt = h.alt, orbit = h.news ? 18 : HELI.orbitRadius;
     if (h.dive > 0) { h.dive = Math.max(0, h.dive - dt); alt = Math.max(7, pp.y + 3); orbit = 9; }
     const tx = pp.x + Math.cos(h.angle) * orbit, tz = pp.z + Math.sin(h.angle) * orbit;
