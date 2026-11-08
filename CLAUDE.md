@@ -22,7 +22,8 @@
 - `src/main.js` — 全部游戏逻辑，按区块组织：
   - `loadModels` / `normalizeModel`：读 `assets/models/manifest.json`，加载 GLB，自动缩放到 `MODELS` 配置的尺寸（汽车会自动把长边转到 X 轴）
   - `makePerson` / `makeCar` / `makeHeli`：有 Hi3D 模型就用模型，没有就用代码画的占位模型
-  - `buildCity`：程序化生成街区、楼（AABB 盒子，用于爬墙碰撞）、路灯、地面贴图
+  - `buildCity` → `src/city.js`：分区城市（市中心玻璃高楼带退台 / 商业街底商+雨棚+霓虹招牌 / 红砖住宅+消防梯+水塔 / 东北角着火废墟），湿路面+水洼、人行道、斑马线、路灯光斑、红绿灯、远景天际线、天空渐变、烟柱。每栋楼（含退台层）是一个 AABB，用于爬墙碰撞。
+  - 画面后期：`EffectComposer` + `UnrealBloomPass`（辉光）+ `OutputPass`。出生点 `SPAWN` 在住宅区路口。
   - `pushOutOfBuildings` / `groundAt`：碰撞与爬墙/站上楼顶的核心
   - `buildMonsterBody` / `buildTentacles` / `attachVictim`：怪兽外观、代码触手、被吃的人粘在身上
   - `updatePlayer` / `updatePeople` / `updateCars` / `updateHelis` / `updateWaves`：每帧逻辑

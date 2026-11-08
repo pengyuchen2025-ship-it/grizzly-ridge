@@ -2,6 +2,11 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { buildCity as buildCityScene } from './city.js';
 import { GAME, PLAYER, WAVES, CIVILIANS, POLICE, HELI, MODELS } from './config.js';
 
 // ---------------------------------------------------------------- utils
@@ -18,14 +23,14 @@ const canvas = $('game');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.5;
+renderer.toneMappingExposure = 1.0;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
 
 const scene = new THREE.Scene();
-const FOG = 0x151b26;
+const FOG = 0x161d2b;
 scene.background = new THREE.Color(FOG);
-scene.fog = new THREE.Fog(FOG, 45, 150);
+scene.fog = new THREE.Fog(FOG, 55, 230);
 const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 scene.environmentIntensity = 0.35;
@@ -33,17 +38,22 @@ scene.environmentIntensity = 0.35;
 const camera = new THREE.PerspectiveCamera(55, 1, 0.5, 400);
 let pixelScale = GAME.pixelScale;
 try { const q = new URLSearchParams(location.search).get('px'); if (q) pixelScale = clamp(+q, 1, 6); } catch (e) {}
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.5, 0.45, 0.88);
+composer.addPass(bloom);
+composer.addPass(new OutputPass());
 function resize() {
   const w = innerWidth, h = innerHeight;
-  if (pixelScale <= 1) { renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5)); renderer.setSize(w, h, false); }
-  else { renderer.setPixelRatio(1); renderer.setSize(Math.max(1, Math.floor(w / pixelScale)), Math.max(1, Math.floor(h / pixelScale)), false); }
+  if (pixelScale <= 1) { const dpr = Math.min(devicePixelRatio, 1.5); renderer.setPixelRatio(dpr); renderer.setSize(w, h, false); composer.setPixelRatio(dpr); composer.setSize(w, h); }
+  else { const cw = Math.max(1, Math.floor(w / pixelScale)), ch = Math.max(1, Math.floor(h / pixelScale)); renderer.setPixelRatio(1); renderer.setSize(cw, ch, false); composer.setPixelRatio(1); composer.setSize(cw, ch); }
   camera.aspect = w / h; camera.updateProjectionMatrix();
 }
 addEventListener('resize', resize); resize();
 
 // ---------------------------------------------------------------- lights
-scene.add(new THREE.HemisphereLight(0x7d8fb5, 0x2a2420, 3.2));
-const moon = new THREE.DirectionalLight(0xb0c4ff, 2.4);
+scene.add(new THREE.HemisphereLight(0x7d8fb5, 0x2a2420, 1.7));
+const moon = new THREE.DirectionalLight(0xb0c4ff, 1.7);
 moon.castShadow = true;
 moon.shadow.mapSize.set(1024, 1024);
 Object.assign(moon.shadow.camera, { left: -45, right: 45, top: 45, bottom: -45, near: 1, far: 160 });
@@ -256,95 +266,15 @@ function makeHeli() {
 const N = GAME.mapBlocks, CELL = GAME.cell, ROAD = GAME.road, HALF = (N * CELL) / 2;
 const LINES = Array.from({ length: N + 1 }, (_, i) => -HALF + i * CELL);
 const buildings = [];
+const SPAWN = new V3(LINES[1], 0, LINES[N - 1]); // 住宅区路口（远离市中心高楼）
 const cityGroup = new THREE.Group(); scene.add(cityGroup);
 
-function windowTexture(seed) {
-  const c = document.createElement('canvas'); c.width = 32; c.height = 64;
-  const x = c.getContext('2d');
-  const bases = ['#6a6670', '#7a6a5e', '#5c6670', '#76646e', '#6c705f', '#83776a'];
-  x.fillStyle = bases[seed % bases.length]; x.fillRect(0, 0, 32, 64);
-  for (let i = 0; i < 90; i++) { x.fillStyle = `rgba(0,0,0,${Math.random() * 0.25})`; x.fillRect(randi(0, 31), randi(0, 63), randi(1, 4), randi(1, 6)); }
-  const e = document.createElement('canvas'); e.width = 32; e.height = 64; const ex = e.getContext('2d'); ex.fillStyle = '#000'; ex.fillRect(0, 0, 32, 64);
-  for (let row = 0; row < 4; row++) for (let col = 0; col < 2; col++) {
-    const wx = 4 + col * 15, wy = 5 + row * 15;
-    const lit = Math.random() < 0.28, broken = Math.random() < 0.15;
-    x.fillStyle = broken ? '#0a0a0c' : '#16191f'; x.fillRect(wx, wy, 9, 9);
-    if (lit && !broken) { const col2 = pick(['#ffcf7a', '#ffe0a0', '#9fd4ff', '#ff9a5a']); x.fillStyle = col2; x.fillRect(wx + 1, wy + 1, 7, 7); ex.fillStyle = col2; ex.fillRect(wx + 1, wy + 1, 7, 7); }
-    else { x.fillStyle = '#232830'; x.fillRect(wx + 1, wy + 1, 7, 3); }
-  }
-  const t = new THREE.CanvasTexture(c), te = new THREE.CanvasTexture(e);
-  for (const tt of [t, te]) { tt.wrapS = tt.wrapT = THREE.RepeatWrapping; tt.magFilter = THREE.NearestFilter; tt.minFilter = THREE.NearestFilter; tt.colorSpace = THREE.SRGBColorSpace; }
-  return { t, te };
-}
-const WINDOW_TEX = Array.from({ length: 6 }, (_, i) => windowTexture(i));
-const roofMat = M(0x45464c);
-
-function addBuilding(minX, maxX, minZ, maxZ, h) {
-  const w = maxX - minX, d = maxZ - minZ;
-  const { t, te } = pick(WINDOW_TEX);
-  const mk = (rx, ry) => { const tt = t.clone(), ee = te.clone(); tt.repeat.set(rx, ry); ee.repeat.set(rx, ry); tt.needsUpdate = ee.needsUpdate = true;
-    return new THREE.MeshLambertMaterial({ map: tt, emissiveMap: ee, emissive: 0xffffff, emissiveIntensity: 0.9, transparent: true, opacity: 1 }); };
-  const mx = mk(Math.max(1, Math.round(d / 4)), Math.max(1, Math.round(h / 8)));
-  const mz = mk(Math.max(1, Math.round(w / 4)), Math.max(1, Math.round(h / 8)));
-  const roof = roofMat.clone(); roof.transparent = true;
-  const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), [mx, mx, roof, roof, mz, mz]);
-  mesh.position.set((minX + maxX) / 2, h / 2, (minZ + maxZ) / 2);
-  mesh.castShadow = mesh.receiveShadow = true;
-  cityGroup.add(mesh);
-  // roof clutter
-  if (Math.random() < 0.6) {
-    const ac = new THREE.Mesh(new THREE.BoxGeometry(rand(1.5, 3), rand(0.8, 1.6), rand(1.5, 3)), M(0x3a3d42));
-    ac.position.set(rand(-w / 3, w / 3), h / 2 + 0.5, rand(-d / 3, d / 3)); mesh.add(ac);
-  }
-  buildings.push({ minX, maxX, minZ, maxZ, top: h, mesh, mats: [mx, mz, roof], fade: 1 });
-}
-
+const cityCtx = { parkingSpots: [], fireSpots: [], barricadeSpots: [] };
+let cityFx = null;
+const cityEffects = [];
 function buildCity() {
-  // ground texture
-  const S = 1024, k = S / (HALF * 2 + 20);
-  const c = document.createElement('canvas'); c.width = c.height = S;
-  const x = c.getContext('2d');
-  x.fillStyle = '#4a4b52'; x.fillRect(0, 0, S, S);
-  const tc = (v) => (v + HALF + 10) * k;
-  for (const L of LINES) {
-    x.fillStyle = '#2c2e34';
-    x.fillRect(tc(L - ROAD / 2), 0, ROAD * k, S); x.fillRect(0, tc(L - ROAD / 2), S, ROAD * k);
-  }
-  x.fillStyle = '#b8962e';
-  for (const L of LINES) for (let p = -HALF; p < HALF; p += 4) { x.fillRect(tc(L) - 1, tc(p), 2, 1.6 * k); x.fillRect(tc(p), tc(L) - 1, 1.6 * k, 2); }
-  for (let i = 0; i < 2500; i++) { x.fillStyle = `rgba(${Math.random() < 0.5 ? '0,0,0' : '90,80,70'},${Math.random() * 0.25})`; x.fillRect(Math.random() * S, Math.random() * S, randi(1, 6), randi(1, 6)); }
-  for (let i = 0; i < 40; i++) { x.fillStyle = 'rgba(10,12,16,0.5)'; x.beginPath(); x.ellipse(Math.random() * S, Math.random() * S, rand(6, 22), rand(3, 10), rand(0, 3), 0, 7); x.fill(); }
-  const gt = new THREE.CanvasTexture(c); gt.colorSpace = THREE.SRGBColorSpace; gt.magFilter = THREE.NearestFilter;
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(HALF * 2 + 20, HALF * 2 + 20), new THREE.MeshLambertMaterial({ map: gt }));
-  ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; cityGroup.add(ground);
-  const outer = new THREE.Mesh(new THREE.PlaneGeometry(800, 800), M(0x0d0f13)); outer.rotation.x = -Math.PI / 2; outer.position.y = -0.05; cityGroup.add(outer);
-
-  // buildings
-  for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
-    const x0 = LINES[i] + ROAD / 2 + 2, x1 = LINES[i + 1] - ROAD / 2 - 2;
-    const z0 = LINES[j] + ROAD / 2 + 2, z1 = LINES[j + 1] - ROAD / 2 - 2;
-    const centerDist = Math.hypot((x0 + x1) / 2, (z0 + z1) / 2);
-    if (Math.random() < 0.12 && centerDist > 20) continue; // empty lot
-    const mid = (x0 + x1) / 2, midz = (z0 + z1) / 2;
-    const layout = Math.random();
-    const H = () => rand(6, 14) + Math.random() * Math.random() * 26;
-    if (layout < 0.3) addBuilding(x0, x1, z0, z1, H());
-    else if (layout < 0.6) { addBuilding(x0, mid - 0.6, z0, z1, H()); addBuilding(mid + 0.6, x1, z0, z1, H()); }
-    else { addBuilding(x0, mid - 0.6, z0, midz - 0.6, H()); addBuilding(mid + 0.6, x1, z0, midz - 0.6, H()); addBuilding(x0, mid - 0.6, midz + 0.6, z1, H()); addBuilding(mid + 0.6, x1, midz + 0.6, z1, H()); }
-  }
-
-  // street lamps (few real lights, many fake glows)
-  let lightCount = 0;
-  for (let i = 0; i < LINES.length; i++) for (let j = 0; j < LINES.length; j++) {
-    if (Math.random() < 0.45) continue;
-    const px = LINES[i] + ROAD / 2 + 0.8, pz = LINES[j] + ROAD / 2 + 0.8;
-    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 6, 5), MAT.lampPost); post.position.set(px, 3, pz);
-    const bulb = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.25, 0.6), MAT.bulb); bulb.position.set(px, 6, pz);
-    cityGroup.add(post, bulb);
-    if (lightCount < 7 && Math.hypot(px, pz) < 70 && Math.random() < 0.7) {
-      const L = new THREE.PointLight(0xffb070, 90, 30, 1.5); L.position.set(px, 5.6, pz); cityGroup.add(L); lightCount++;
-    }
-  }
+  cityFx = buildCityScene({ scene, cityGroup, buildings, LINES, N, ROAD, HALF, ...cityCtx });
+  for (const p of cityCtx.fireSpots) fire(p.clone(), Infinity, cityEffects);
 }
 
 // ---------------------------------------------------------------- helpers: streets & collision
@@ -409,13 +339,13 @@ function explosion(pos, scale = 1) {
   }, dispose() { scene.remove(pts); geo.dispose(); mat.dispose(); if (light) { scene.remove(light); activeBoomLights--; } debris.forEach((d) => scene.remove(d.m)); } });
   shake = Math.max(shake, 0.8 * scale);
 }
-function fire(pos, life = 6) {
+function fire(pos, life = 6, list = effects) {
   const n = 18; const geo = new THREE.BufferGeometry(); const p = new Float32Array(n * 3); const seeds = [];
   for (let i = 0; i < n; i++) seeds.push([rand(-0.8, 0.8), rand(0, 1), rand(-0.8, 0.8)]);
   geo.setAttribute('position', new THREE.BufferAttribute(p, 3));
   const mat = new THREE.PointsMaterial({ size: 1.6, map: sparkTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, color: 0xff6a20 });
   const pts = new THREE.Points(geo, mat); scene.add(pts);
-  effects.push({ life, max: life, update(dt) {
+  list.push({ life, max: life, update(dt) {
     const a = geo.attributes.position.array;
     for (let i = 0; i < n; i++) { seeds[i][1] = (seeds[i][1] + dt * rand(0.8, 1.6)) % 1; a[i * 3] = pos.x + seeds[i][0] * (1 - seeds[i][1]); a[i * 3 + 1] = pos.y + 0.8 + seeds[i][1] * 2.4; a[i * 3 + 2] = pos.z + seeds[i][2] * (1 - seeds[i][1]); }
     geo.attributes.position.needsUpdate = true; mat.opacity = Math.min(1, this.life);
@@ -482,6 +412,7 @@ function buildMonsterBody() {
 function buildTentacles() {
   player.tentacles.forEach((t) => player.root.remove(t.base));
   player.tentacles = [];
+  if (templates.monster) return; // the Hi3D monster already has its own limbs
   for (let i = 0; i < 5; i++) {
     const base = new THREE.Group(); const a = (i / 5) * Math.PI * 2 + 0.4;
     base.position.set(Math.cos(a) * 0.7, 0.2, Math.sin(a) * 0.7);
@@ -525,10 +456,11 @@ function spawnParkedCars() {
     const L = pick(LINES), along = rand(-HALF + 6, HALF - 6), side = Math.random() < 0.5 ? -3.3 : 3.3;
     const horizontal = Math.random() < 0.5;
     const pos = horizontal ? new V3(along, 0, L + side) : new V3(L + side, 0, along);
-    if (Math.hypot(pos.x, pos.z) < 12) continue;
+    if (Math.hypot(pos.x - SPAWN.x, pos.z - SPAWN.z) < 12) continue;
     const { mesh } = makeCar(false); mesh.position.copy(pos); mesh.rotation.y = horizontal ? (Math.random() < 0.5 ? 0 : Math.PI) : Math.PI / 2 * (Math.random() < 0.5 ? 1 : -1);
     scene.add(mesh); cars.push({ mesh, pos: mesh.position, police: false, state: 'parked', vy: 0, spin: 0 });
   }
+  for (const p of cityCtx.parkingSpots) { const { mesh } = makeCar(false); mesh.position.copy(p); mesh.rotation.y = Math.PI / 2; scene.add(mesh); cars.push({ mesh, pos: mesh.position, police: false, state: 'parked', vy: 0, spin: 0 }); }
 }
 function spawnPoliceCar() {
   // start at an intersection far away
@@ -560,12 +492,12 @@ function resetGame() {
   effects.splice(0).forEach((e) => e.dispose());
   player.attached = [];
   Object.assign(player, { r: PLAYER.startRadius, targetR: PLAYER.startRadius, hp: PLAYER.maxHp, grounded: true, climbing: false });
-  player.pos.set(0, PLAYER.startRadius, 0); player.vel.set(0, 0, 0);
+  player.pos.set(SPAWN.x, PLAYER.startRadius, SPAWN.z); player.vel.set(0, 0, 0);
   buildMonsterBody(); buildTentacles();
   Object.assign(state, { running: true, over: false, t: 0, wave: 0, eaten: 0, carsCrushed: 0, helisDown: 0, crushReady: false, toldClimb: false, spawnT: { cop: 5, car: 0, heli: 0 }, slowmo: 1 });
-  for (let i = 0; i < CIVILIANS.count; i++) { const e = spawnPerson(Math.random() < 0.5 ? 'man' : 'woman'); if (i < 14) { const p = randomStreetPoint(null); for (let k = 0; k < 20 && Math.hypot(p.x, p.z) > 26; k++) p.copy(randomStreetPoint(null)); if (Math.hypot(p.x, p.z) > 6) e.pos.copy(p); } }
+  for (let i = 0; i < CIVILIANS.count; i++) { const e = spawnPerson(Math.random() < 0.5 ? 'man' : 'woman'); if (i < 14) { const p = randomStreetPoint(null); for (let k = 0; k < 30 && Math.hypot(p.x - SPAWN.x, p.z - SPAWN.z) > 26; k++) p.copy(randomStreetPoint(null)); if (Math.hypot(p.x - SPAWN.x, p.z - SPAWN.z) > 6) e.pos.copy(p); } }
   spawnParkedCars();
-  camera.position.set(0, 20, 22);
+  camera.position.set(SPAWN.x, 20, SPAWN.z + 22);
   centerMsg('吞下路人！', '吃人会变大，还能回血');
 }
 
@@ -840,7 +772,7 @@ function segHitsBox(ax, az, bx, bz, b) {
 }
 function updateCamera(dt) {
   const r = player.r;
-  const back = 7 + r * 2.4, up = 19 + r * 4.6;
+  const back = 8 + r * 2.4, up = 22 + r * 4.6;
   const target = tmpV.set(player.pos.x, player.pos.y + up, player.pos.z + back);
   camera.position.lerp(target, Math.min(1, dt * 4));
   if (shake > 0) { camera.position.x += rand(-1, 1) * shake; camera.position.y += rand(-1, 1) * shake; shake = Math.max(0, shake - dt * 2.5); }
@@ -879,6 +811,7 @@ function updateHUD(dt) {
 
 // ---------------------------------------------------------------- main loop
 const clock = new THREE.Clock();
+let cityT = 0;
 function frame() {
   requestAnimationFrame(frame);
   let dt = Math.min(clock.getDelta(), 1 / 20);
@@ -893,16 +826,18 @@ function frame() {
     updateHUD(dt);
   }
   for (let i = effects.length - 1; i >= 0; i--) { const e = effects[i]; e.life -= dt; e.update(dt); if (e.life <= 0) { e.dispose(); effects.splice(i, 1); } }
+  for (const e of cityEffects) e.update(dt);
+  cityT += dt; if (cityFx) cityFx.update(dt, cityT);
   updateCamera(dt);
-  renderer.render(scene, camera);
+  composer.render();
 }
 
 // ---------------------------------------------------------------- boot
 (async function boot() {
   await loadModels();
   buildCity();
-  player.pos.set(0, PLAYER.startRadius, 0); buildMonsterBody(); buildTentacles();
-  camera.position.set(0, 20, 22);
+  player.pos.set(SPAWN.x, PLAYER.startRadius, SPAWN.z); buildMonsterBody(); buildTentacles();
+  camera.position.set(SPAWN.x, 20, SPAWN.z + 22);
   $('loading').textContent = Object.keys(templates).length ? `已载入 Hi3D 模型 ${Object.keys(templates).length} 个` : '模型由 Hi3D 生成 · 占位模型显示中';
   frame();
   const start = () => { Sfx.init(); $('start-screen').classList.add('hidden'); $('result-screen').classList.add('hidden'); resetGame(); };
