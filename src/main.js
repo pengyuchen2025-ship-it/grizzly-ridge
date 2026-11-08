@@ -6,8 +6,8 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { buildCity as buildCityScene } from './city.js?v=20261108094247';
-import { GAME, PLAYER, WAVES, CIVILIANS, POLICE, HELI, MODELS, TRAFFIC } from './config.js?v=20261108094247';
+import { buildCity as buildCityScene } from './city.js?v=20261108095735';
+import { GAME, PLAYER, WAVES, CIVILIANS, POLICE, HELI, MODELS, TRAFFIC } from './config.js?v=20261108095735';
 
 // ---------------------------------------------------------------- utils
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -61,72 +61,116 @@ moon.shadow.bias = -0.0008;
 scene.add(moon, moon.target);
 
 // ---------------------------------------------------------------- audio (synth, no files)
+// background music (user-provided track), loops; started on the first click so mobile browsers allow it
+const bgm = new Audio('assets/audio/bgm.mp3'); bgm.loop = true; bgm.preload = 'auto'; bgm.volume = 0.42;
 const Sfx = (() => {
-  let ctx = null, master = null, noiseBuf = null, muted = false, sirenNode = null, heliNode = null;
+  let ctx = null, master = null, dry = null, wet = null, noiseBuf = null, brownBuf = null, muted = false;
+  let sirenNode = null, heliNode = null, breathNode = null;
+  const last = {};
+  const now = () => ctx.currentTime;
+  const ok = (key, gap) => { if (!ctx || muted) return false; const t = now(); if (last[key] && t - last[key] < gap) return false; last[key] = t; return true; };
   function init() {
-    if (ctx) return;
+    if (ctx) { ctx.resume && ctx.resume(); return; }
     try {
       ctx = new (window.AudioContext || window.webkitAudioContext)();
-      master = ctx.createGain(); master.gain.value = 0.55; master.connect(ctx.destination);
-      noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
-      const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      const comp = ctx.createDynamicsCompressor(); comp.threshold.value = -16; comp.knee.value = 12; comp.ratio.value = 5; comp.attack.value = 0.003; comp.release.value = 0.25;
+      master = ctx.createGain(); master.gain.value = 0.8; master.connect(comp); comp.connect(ctx.destination);
+      dry = ctx.createGain(); dry.connect(master);
+      // reverb send (generated impulse: wet street / alley)
+      const conv = ctx.createConvolver(); const len = ctx.sampleRate * 1.8; const ir = ctx.createBuffer(2, len, ctx.sampleRate);
+      for (let c = 0; c < 2; c++) { const d = ir.getChannelData(c); for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3.2); }
+      conv.buffer = ir; wet = ctx.createGain(); wet.gain.value = 0.32; wet.connect(conv); conv.connect(master);
+      noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate); const n = noiseBuf.getChannelData(0); for (let i = 0; i < n.length; i++) n[i] = Math.random() * 2 - 1;
+      brownBuf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate); const bd = brownBuf.getChannelData(0); let l = 0; for (let i = 0; i < bd.length; i++) { l = (l + 0.02 * (Math.random() * 2 - 1)) / 1.02; bd[i] = l * 3.5; }
+      ambience();
     } catch (e) { ctx = null; }
   }
-  function noise(dur, freq, q, vol, type = 'lowpass', sweepTo) {
-    if (!ctx || muted) return;
-    const s = ctx.createBufferSource(); s.buffer = noiseBuf;
-    const f = ctx.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = q;
-    if (sweepTo) f.frequency.exponentialRampToValueAtTime(sweepTo, ctx.currentTime + dur);
-    const g = ctx.createGain(); g.gain.setValueAtTime(vol, ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
-    s.connect(f); f.connect(g); g.connect(master); s.start(); s.stop(ctx.currentTime + dur + 0.05);
+  const out = (node, send = 0) => { node.connect(dry); if (send) { const g = ctx.createGain(); g.gain.value = send; node.connect(g); g.connect(wet); } };
+  function noise({ dur = 0.2, type = 'lowpass', freq = 1000, q = 1, to, vol = 0.5, attack = 0.002, delay = 0, brown = false, send = 0.2, rate = 1 }) {
+    const t = now() + delay, s = ctx.createBufferSource(); s.buffer = brown ? brownBuf : noiseBuf; s.playbackRate.value = rate;
+    s.loop = dur > 1.9;
+    const f = ctx.createBiquadFilter(); f.type = type; f.frequency.setValueAtTime(freq, t); f.Q.value = q; if (to) f.frequency.exponentialRampToValueAtTime(to, t + dur);
+    const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + attack); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    s.connect(f); f.connect(g); out(g, send); s.start(t, Math.random() * 1.5); s.stop(t + dur + 0.05);
   }
-  function tone(freq, dur, vol, type = 'sine', to) {
-    if (!ctx || muted) return;
-    const o = ctx.createOscillator(); o.type = type; o.frequency.value = freq;
-    if (to) o.frequency.exponentialRampToValueAtTime(to, ctx.currentTime + dur);
-    const g = ctx.createGain(); g.gain.setValueAtTime(vol, ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
-    o.connect(g); g.connect(master); o.start(); o.stop(ctx.currentTime + dur + 0.05);
+  function tone({ freq = 200, to, dur = 0.2, vol = 0.3, type = 'sine', attack = 0.005, delay = 0, send = 0.15, lp }) {
+    const t = now() + delay, o = ctx.createOscillator(); o.type = type; o.frequency.setValueAtTime(freq, t); if (to) o.frequency.exponentialRampToValueAtTime(to, t + dur);
+    const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + attack); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    let last = o; if (lp) { const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = lp; o.connect(f); last = f; }
+    last.connect(g); out(g, send); o.start(t); o.stop(t + dur + 0.05);
   }
-  function loop(kind) {
-    if (!ctx) return null;
-    const g = ctx.createGain(); g.gain.value = 0; g.connect(master);
-    if (kind === 'siren') {
-      const o = ctx.createOscillator(); o.type = 'square'; o.frequency.value = 700;
-      const lfo = ctx.createOscillator(); lfo.frequency.value = 0.9; const lg = ctx.createGain(); lg.gain.value = 180;
-      lfo.connect(lg); lg.connect(o.frequency);
-      const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 1400;
-      o.connect(f); f.connect(g); o.start(); lfo.start();
-    } else {
-      const s = ctx.createBufferSource(); s.buffer = noiseBuf; s.loop = true;
-      const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 260;
-      const am = ctx.createGain(); am.gain.value = 0.6;
-      const lfo = ctx.createOscillator(); lfo.type = 'square'; lfo.frequency.value = 13; const lg = ctx.createGain(); lg.gain.value = 0.4;
-      lfo.connect(lg); lg.connect(am.gain);
-      s.connect(f); f.connect(am); am.connect(g); s.start(); lfo.start();
-    }
-    return g;
+  function growl(dur = 0.5, vol = 0.35, pitch = 70, delay = 0) { // throaty monster growl: saw + AM + lowpass
+    const t = now() + delay, o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.setValueAtTime(pitch * rand(0.9, 1.15), t); o.frequency.linearRampToValueAtTime(pitch * 0.75, t + dur);
+    const am = ctx.createGain(); am.gain.value = 0.5; const lfo = ctx.createOscillator(); lfo.frequency.value = rand(18, 30); const lg = ctx.createGain(); lg.gain.value = 0.5; lfo.connect(lg); lg.connect(am.gain);
+    const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 520; f.Q.value = 4;
+    const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.05); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(am); am.connect(f); f.connect(g); out(g, 0.3); o.start(t); lfo.start(t); o.stop(t + dur + 0.05); lfo.stop(t + dur + 0.05);
+    noise({ dur, type: 'bandpass', freq: 300, q: 2, vol: vol * 0.4, delay, brown: true });
+  }
+  function loopGain() { const g = ctx.createGain(); g.gain.value = 0; g.connect(dry); return g; }
+  function ambience() {
+    // rain hiss + distant city rumble, always on
+    const rain = ctx.createBufferSource(); rain.buffer = noiseBuf; rain.loop = true;
+    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 2500; const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 9000;
+    const rg = ctx.createGain(); rg.gain.value = 0.045; rain.connect(hp); hp.connect(lp); lp.connect(rg); rg.connect(dry); rain.start();
+    const city = ctx.createBufferSource(); city.buffer = brownBuf; city.loop = true; const cl = ctx.createBiquadFilter(); cl.type = 'lowpass'; cl.frequency.value = 180;
+    const cg = ctx.createGain(); cg.gain.value = 0.12; city.connect(cl); cl.connect(cg); cg.connect(dry); city.start();
+    // monster breathing: slow wet rumble
+    const br = ctx.createBufferSource(); br.buffer = brownBuf; br.loop = true; const bf = ctx.createBiquadFilter(); bf.type = 'bandpass'; bf.frequency.value = 220; bf.Q.value = 1.5;
+    const bam = ctx.createGain(); bam.gain.value = 0; const blfo = ctx.createOscillator(); blfo.frequency.value = 0.35; const blg = ctx.createGain(); blg.gain.value = 0.5; blfo.connect(blg); blg.connect(bam.gain);
+    breathNode = ctx.createGain(); breathNode.gain.value = 0; br.connect(bf); bf.connect(bam); bam.connect(breathNode); breathNode.connect(dry); br.start(); blfo.start();
+    // US police siren wail
+    sirenNode = loopGain();
+    const so = ctx.createOscillator(); so.type = 'triangle'; so.frequency.value = 950; const sl = ctx.createOscillator(); sl.frequency.value = 0.22; const sg = ctx.createGain(); sg.gain.value = 380; sl.connect(sg); sg.connect(so.frequency);
+    const sf = ctx.createBiquadFilter(); sf.type = 'lowpass'; sf.frequency.value = 2200; so.connect(sf); sf.connect(sirenNode); const ss = ctx.createGain(); ss.gain.value = 0.6; sf.connect(ss); ss.connect(wet); so.start(); sl.start();
+    // helicopter rotor chop
+    heliNode = loopGain();
+    const hn = ctx.createBufferSource(); hn.buffer = brownBuf; hn.loop = true; const hf = ctx.createBiquadFilter(); hf.type = 'lowpass'; hf.frequency.value = 420;
+    const ham = ctx.createGain(); ham.gain.value = 0.15; const hl = ctx.createOscillator(); hl.type = 'square'; hl.frequency.value = 11.5; const hlg = ctx.createGain(); hlg.gain.value = 0.85; hl.connect(hlg); hlg.connect(ham.gain);
+    hn.connect(hf); hf.connect(ham); ham.connect(heliNode); hn.start(); hl.start();
   }
   return {
     init,
     get muted() { return muted; },
-    toggle() { muted = !muted; if (master) master.gain.value = muted ? 0 : 0.55; return muted; },
-    eat() { noise(0.35, 900, 6, 0.9, 'lowpass', 120); tone(160, 0.25, 0.35, 'sawtooth', 50); },
-    shot(vol = 0.3) { noise(0.12, 2200, 0.8, vol, 'bandpass'); },
-    boom() { noise(1.4, 1200, 0.7, 1.4, 'lowpass', 40); tone(70, 0.9, 0.7, 'sine', 25); },
-    jump() { tone(140, 0.25, 0.25, 'triangle', 320); },
-    hit() { noise(0.08, 500, 2, 0.35, 'bandpass'); },
-    glass() { noise(0.25, 5200, 1.2, 0.35, 'highpass'); tone(rand(2400, 3600), 0.12, 0.08, 'triangle'); tone(rand(3000, 4200), 0.18, 0.06, 'triangle'); },
-    slam(p = 1) { noise(0.5 + p * 0.3, 380, 0.8, 0.7 + p * 0.4, 'lowpass', 40); tone(55, 0.4 + p * 0.2, 0.5 + p * 0.3, 'sine', 30); },
-    squelch() { noise(0.25, 700, 3, 0.6, 'lowpass', 150); },
-    bump() { tone(90, 0.18, 0.3, 'square', 60); },
-    alert() { tone(520, 0.18, 0.25, 'square'); setTimeout(() => tone(760, 0.3, 0.25, 'square'), 180); },
-    setLoops(siren, heli) {
-      if (!ctx) return;
-      if (!sirenNode) sirenNode = loop('siren');
-      if (!heliNode) heliNode = loop('heli');
-      const t = ctx.currentTime;
-      sirenNode && sirenNode.gain.setTargetAtTime(muted ? 0 : siren * 0.05, t, 0.3);
-      heliNode && heliNode.gain.setTargetAtTime(muted ? 0 : heli * 0.5, t, 0.3);
+    toggle() { muted = !muted; if (master) master.gain.value = muted ? 0 : 0.8; bgm.muted = muted; return muted; },
+    // bone crunch + wet squelch + gulp + growl
+    eat() { if (!ok('eat', 0.06)) return;
+      for (let i = 0; i < 4; i++) noise({ dur: 0.035, type: 'bandpass', freq: rand(1800, 3800), q: 3, vol: 0.5, delay: i * rand(0.02, 0.04), send: 0.1 });
+      noise({ dur: 0.38, type: 'lowpass', freq: 1400, q: 9, to: 160, vol: 0.55, delay: 0.05, brown: true });
+      tone({ freq: 190, to: 65, dur: 0.22, vol: 0.4, delay: 0.16, lp: 600 });
+      if (Math.random() < 0.6) growl(0.45, 0.28, 62, 0.12);
+    },
+    squelch() { if (!ok('sq', 0.08)) return; noise({ dur: 0.3, type: 'lowpass', freq: 1100, q: 8, to: 180, vol: 0.4, brown: true }); },
+    // gunshot: sharp crack + body thump + street echo (rate-limited so a squad doesn't turn into noise)
+    shot(vol = 0.3) { if (!ok('shot', 0.07)) return; const v = clamp(vol * 2.2, 0.08, 0.7);
+      noise({ dur: 0.05, type: 'highpass', freq: 1800, vol: v, send: 0.55 }); noise({ dur: 0.12, type: 'lowpass', freq: 900, to: 200, vol: v * 0.7, brown: true, send: 0.4 }); tone({ freq: 140, to: 50, dur: 0.1, vol: v * 0.6, send: 0.3 }); },
+    // explosion: sub thump + roaring body + crackle + debris falling
+    boom() { if (!ok('boom', 0.12)) return;
+      tone({ freq: 70, to: 28, dur: 1.3, vol: 0.9, attack: 0.004, send: 0.3 });
+      noise({ dur: 1.9, type: 'lowpass', freq: 1800, to: 70, vol: 0.9, brown: true, send: 0.5 });
+      noise({ dur: 0.25, type: 'highpass', freq: 1200, vol: 0.5, send: 0.4 });
+      for (let i = 0; i < 9; i++) noise({ dur: 0.03, type: 'bandpass', freq: rand(1500, 5000), q: 2, vol: 0.18, delay: rand(0.15, 1.1), send: 0.3 });
+      for (let i = 0; i < 6; i++) tone({ freq: rand(2500, 5200), dur: rand(0.05, 0.12), vol: 0.05, type: 'triangle', delay: rand(0.5, 1.4), send: 0.4 }); },
+    // glass: shatter burst + tinkles (rate-limited while climbing)
+    glass() { if (!ok('glass', 0.24)) return;
+      noise({ dur: 0.18, type: 'highpass', freq: 3500, vol: 0.35, send: 0.4 });
+      for (let i = 0; i < 7; i++) tone({ freq: rand(2800, 6500), dur: rand(0.05, 0.18), vol: rand(0.04, 0.09), type: 'triangle', delay: rand(0.01, 0.35), send: 0.5 }); },
+    // ground slam: heavy thud + rubble
+    slam(p = 1) { if (!ok('slam', 0.1)) return;
+      tone({ freq: 85, to: 32, dur: 0.45 + p * 0.25, vol: 0.55 + p * 0.25, send: 0.3 });
+      noise({ dur: 0.5 + p * 0.3, type: 'lowpass', freq: 700, to: 90, vol: 0.45 + p * 0.25, brown: true, send: 0.35 });
+      for (let i = 0; i < 5; i++) noise({ dur: 0.04, type: 'bandpass', freq: rand(600, 2200), q: 2, vol: 0.15, delay: rand(0.08, 0.5) }); },
+    jump() { if (!ok('jump', 0.1)) return; noise({ dur: 0.3, type: 'bandpass', freq: 350, q: 1.2, to: 1400, vol: 0.25, send: 0.1 }); growl(0.3, 0.2, 85); },
+    hit() { if (!ok('hit', 0.09)) return; noise({ dur: 0.07, type: 'lowpass', freq: 1200, q: 3, to: 300, vol: 0.35, brown: true }); tone({ freq: 220, to: 120, dur: 0.06, vol: 0.12 }); },
+    bump() { if (!ok('bump', 0.15)) return; tone({ freq: 150, to: 85, dur: 0.14, vol: 0.3, type: 'square', lp: 900 }); noise({ dur: 0.12, type: 'bandpass', freq: 900, q: 4, vol: 0.25 }); },
+    carAlarm() { if (!ok('alarm', 1)) return; for (let i = 0; i < 6; i++) tone({ freq: i % 2 ? 1300 : 950, dur: 0.18, vol: 0.12, type: 'square', delay: i * 0.2, lp: 2500, send: 0.4 }); },
+    // police radio chirp for wave announcements
+    alert() { if (!ok('alert', 0.5)) return; noise({ dur: 0.12, type: 'bandpass', freq: 1800, q: 1.5, vol: 0.25 }); tone({ freq: 1250, dur: 0.09, vol: 0.18, type: 'square', delay: 0.12, lp: 3000 }); tone({ freq: 1250, dur: 0.09, vol: 0.18, type: 'square', delay: 0.26, lp: 3000 }); noise({ dur: 0.25, type: 'bandpass', freq: 1800, q: 1.5, vol: 0.18, delay: 0.38 }); },
+    setLoops(siren, heli, breath = 1) {
+      if (!ctx) return; const t = now();
+      sirenNode && sirenNode.gain.setTargetAtTime(muted ? 0 : siren * 0.07, t, 0.4);
+      heliNode && heliNode.gain.setTargetAtTime(muted ? 0 : heli * 0.55, t, 0.4);
+      breathNode && breathNode.gain.setTargetAtTime(muted ? 0 : breath * 0.25, t, 0.4);
     },
   };
 })();
@@ -869,7 +913,7 @@ function updateCars(dt) {
       continue;
     }
     if (c.state === 'wreck') continue;
-    if (player.onCar === c && !c.dented) { c.dented = true; c.wobble = 0.8; Sfx.alert(); floatText(tmpV2.copy(c.pos).setY(2.6), '车辆警报！', 'dmg'); glassBurst(c.pos.x, c.pos.y + 1.3, c.pos.z, 1, 0, null); glassBurst(c.pos.x, c.pos.y + 1.3, c.pos.z, -1, 0, null); }
+    if (player.onCar === c && !c.dented) { c.dented = true; c.wobble = 0.8; Sfx.carAlarm(); floatText(tmpV2.copy(c.pos).setY(2.6), '车辆警报！', 'dmg'); glassBurst(c.pos.x, c.pos.y + 1.3, c.pos.z, 1, 0, null); glassBurst(c.pos.x, c.pos.y + 1.3, c.pos.z, -1, 0, null); }
     if (c.wobble > 0) { c.wobble -= dt; c.mesh.rotation.z = Math.sin(state.t * 40) * 0.06 * c.wobble; if (c.wobble <= 0) c.mesh.rotation.z = 0; }
     if (c.hop > 0) { c.hop -= dt; c.pos.y = Math.max(0, Math.sin((1 - c.hop / 0.5) * Math.PI) * 1.3); if (c.hop <= 0) c.pos.y = 0; }
     // civilian traffic
@@ -1024,6 +1068,7 @@ function showResult(t, score, best) {
     for (const [id, v] of targets) $(id).textContent = Number.isInteger(v) ? Math.round(v * e) : (v * e).toFixed(1);
     if (k < 1) requestAnimationFrame(tick);
   })(t0);
+  bgm.volume = 0.25;
   document.body.classList.add('menu');
   $('result-screen').classList.remove('hidden');
 }
@@ -1141,7 +1186,7 @@ function frame() {
   try { const v = new URL(import.meta.url).searchParams.get('v'); if (v && v.length >= 12) { const hh = (parseInt(v.slice(8, 10), 10) + 8) % 24; ver = ` · 版本 ${String(hh).padStart(2, '0')}:${v.slice(10, 12)}`; } } catch (e) {}
   $('loading').textContent = (Object.keys(templates).length ? `已载入 Hi3D 模型 ${Object.keys(templates).length} 个` : '模型由 Hi3D 生成 · 占位模型显示中') + ver;
   frame();
-  const start = () => { Sfx.init(); document.body.classList.remove('menu'); $('start-screen').classList.add('hidden'); $('result-screen').classList.add('hidden'); resetGame(); };
+  const start = () => { Sfx.init(); bgm.volume = 0.42; if (bgm.paused) bgm.play().catch(() => {}); document.body.classList.remove('menu'); $('start-screen').classList.add('hidden'); $('result-screen').classList.add('hidden'); resetGame(); };
   $('start-btn').addEventListener('click', start);
   $('restart-btn').addEventListener('click', start);
   window.__gameOverTest = () => damage(9999); window.__game = { state, player, start, gas: cityCtx.gasStation, get civilians() { return civilians; }, get cops() { return cops; }, get cars() { return cars; }, get helis() { return helis; }, stick };
