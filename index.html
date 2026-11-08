@@ -100,6 +100,7 @@
   #stick { position:fixed; width:110px; height:110px; border-radius:50%; border:2px solid rgba(255,255,255,.35); pointer-events:none; display:none; z-index:5; }
   #stick i { position:absolute; left:50%; top:50%; width:46px; height:46px; margin:-23px 0 0 -23px; border-radius:50%; background:rgba(255,255,255,.4); }
   @media (pointer:coarse) { #touch-jump { display:flex; } }
+  body.clean .hud, body.clean #mute, body.clean #touch-jump, body.clean #stick, body.clean .float, body.clean #center-msg, body.clean #vignette { display:none !important; }
   #mute { position:fixed; right:16px; bottom:14px; pointer-events:auto; background:none; border:none; color:#fff; opacity:.6; font-size:20px; cursor:pointer; z-index:6; }
   @media (pointer:coarse) { #mute { bottom:auto; top:90px; } }
 </style>
@@ -170,6 +171,6 @@
   "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
 } }
 </script>
-<script type="module" src="src/main.js?v=20261108103727"></script>
+<script type="module" src="src/main.js?v=20261108110840"></script>
 </body>
 </html>

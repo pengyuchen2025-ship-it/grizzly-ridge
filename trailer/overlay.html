@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Trailer overlays</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@500;900&family=Anton&display=block" rel="stylesheet">
+<style>
+  /* 1920×1080 宣传片文字层：透明背景的叠加字幕 + 全屏字卡。由 trailer/render_overlays.js 逐帧截图 */
+  html, body { margin:0; width:1920px; height:1080px; overflow:hidden; background:transparent; font-family:"Noto Sans SC", sans-serif; color:#f4efe6; }
+  .layer { position:absolute; inset:0; display:none; }
+  .layer.on { display:block; }
+  /* ---------- full-screen cards ---------- */
+  .card { background:radial-gradient(ellipse 70% 60% at 50% 50%, #1a0507 0%, #07050a 60%, #020203 100%); }
+  .card::after { content:""; position:absolute; inset:0; background:repeating-linear-gradient(0deg, rgba(0,0,0,.35) 0 2px, transparent 2px 5px); }
+  .center { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; }
+  .big { font-weight:900; font-size:170px; line-height:1.05; letter-spacing:.06em; text-shadow:0 0 50px rgba(224,48,58,.7), 0 8px 0 #000; position:relative; }
+  .big .r, .big .c { position:absolute; inset:0; mix-blend-mode:screen; }
+  .big .r { color:#ff2a3a; } .big .c { color:#2ad8ff; }
+  .kick { font-weight:900; color:#ffb02e; letter-spacing:.5em; font-size:34px; margin-bottom:26px; text-shadow:0 3px 0 #000; padding-left:.5em; }
+  .en { font-family:Anton, Impact, sans-serif; letter-spacing:.42em; font-size:30px; color:#c9c2b6; margin-top:30px; padding-left:.42em; opacity:.85; }
+  .flow { display:flex; gap:28px; align-items:center; margin-top:40px; font-weight:900; font-size:44px; }
+  .flow i { font-style:normal; color:#e0303a; font-size:40px; }
+  .flow span { opacity:0; }
+  /* ---------- lower-third caption ---------- */
+  .lower { position:absolute; left:96px; bottom:110px; display:flex; flex-direction:column; align-items:flex-start; }
+  .lower .tag { display:flex; align-items:stretch; transform:skewX(-10deg); box-shadow:0 8px 40px rgba(0,0,0,.6); }
+  .lower .tag b { background:#e0303a; color:#fff; font-weight:900; font-size:58px; letter-spacing:.12em; padding:6px 30px 8px; }
+  .lower .tag em { font-style:normal; background:rgba(8,8,10,.86); color:#ffb02e; font-weight:900; font-size:30px; letter-spacing:.2em; padding:0 26px; display:flex; align-items:center; }
+  .lower .sub { margin-top:14px; font-weight:500; font-size:30px; letter-spacing:.12em; text-shadow:0 2px 0 #000, 0 0 12px #000; padding-left:12px; }
+  /* ---------- breaking news (opening) ---------- */
+  .newsbar { position:absolute; top:0; left:0; right:0; height:66px; display:flex; align-items:center; gap:18px; padding:0 40px; background:linear-gradient(90deg,#b3121d,#7a0a12); font-weight:900; letter-spacing:.3em; font-size:26px; box-shadow:0 6px 30px rgba(179,18,29,.5); }
+  .newsbar .dot { width:16px; height:16px; border-radius:50%; background:#fff; }
+  .newsbar .live { margin-left:auto; border:2px solid #fff; padding:2px 14px; font-size:20px; }
+  .place { position:absolute; left:96px; bottom:120px; }
+  .place .t { font-weight:900; font-size:86px; letter-spacing:.14em; text-shadow:0 0 30px rgba(0,0,0,.9), 0 5px 0 #000; }
+  .place .s { font-weight:500; font-size:32px; letter-spacing:.3em; color:#ffb02e; text-shadow:0 3px 0 #000; margin-top:6px; }
+  .bars::before, .bars::after { content:""; position:absolute; left:0; right:0; height:var(--bar,0px); background:#000; }
+  .bars::before { top:0; } .bars::after { bottom:0; }
+  /* ---------- end card ---------- */
+  .endwrap { position:absolute; inset:0; z-index:2; display:flex; align-items:center; justify-content:center; gap:120px; }
+  .endl { text-align:left; }
+  .endl .big { font-size:190px; }
+  .endl .en { margin-top:18px; font-size:34px; }
+  .endl .line { width:620px; height:4px; background:linear-gradient(90deg,#e0303a,transparent); margin:34px 0 28px; }
+  .endl .play { font-weight:900; font-size:52px; letter-spacing:.12em; }
+  .endl .play small { display:block; font-weight:500; font-size:28px; color:#c9c2b6; letter-spacing:.14em; margin-top:12px; }
+  .endl .url { margin-top:26px; font-family:Anton, sans-serif; font-size:30px; letter-spacing:.06em; color:#ffb02e; }
+  .qr { background:#fff; padding:22px; box-shadow:0 0 0 6px #e0303a, 0 0 80px rgba(224,48,58,.65); }
+  .qr img { display:block; width:400px; height:400px; image-rendering:pixelated; }
+  .qrcap { margin-top:26px; text-align:center; font-weight:900; font-size:30px; letter-spacing:.3em; color:#fff; padding-left:.3em; }
+  .credit { position:absolute; z-index:2; bottom:46px; left:0; right:0; text-align:center; font-size:22px; letter-spacing:.2em; color:#8d877d; }
+</style>
+</head>
+<body>
+<!-- opening: breaking news + place name over the aerial shot -->
+<div class="layer bars" id="L-open">
+  <div class="newsbar" id="open-bar"><span class="dot" id="open-dot"></span>紧急广播 · 灰岭市应急管理局<span class="live">LIVE</span></div>
+  <div class="place" id="open-place"><div class="t">灰岭市</div><div class="s">23:47 · 暴雨 · 全城停电预警</div></div>
+</div>
+<!-- card 1 -->
+<div class="layer card" id="L-card1"><div class="center">
+  <div class="kick" id="c1-kick">今夜</div>
+  <div class="big" id="c1-big">你就是怪物<span class="r">你就是怪物</span><span class="c">你就是怪物</span></div>
+  <div class="en" id="c1-en">TONIGHT, YOU ARE THE MONSTER</div>
+</div></div>
+<!-- card 2 -->
+<div class="layer card" id="L-card2"><div class="center">
+  <div class="big" id="c2-big" style="font-size:150px">警力不断升级<span class="r">警力不断升级</span><span class="c">警力不断升级</span></div>
+  <div class="flow" id="c2-flow"><span>警察</span><span><i>▶</i></span><span>警车</span><span><i>▶</i></span><span>直升机</span><span><i>▶</i></span><span>路障</span></div>
+</div></div>
+<!-- card 3 -->
+<div class="layer card" id="L-card3"><div class="center">
+  <div class="kick" id="c3-kick">没有等级 · 没有尽头</div>
+  <div class="big" id="c3-big">你能撑多久？<span class="r">你能撑多久？</span><span class="c">你能撑多久？</span></div>
+</div></div>
+<!-- lower-third captions -->
+<div class="layer" id="L-lower"><div class="lower" id="lower"><div class="tag"><b id="lw-b"></b><em id="lw-em"></em></div><div class="sub" id="lw-sub"></div></div></div>
+<!-- big centered caption over gameplay -->
+<div class="layer" id="L-fallen"><div class="center"><div class="kick" id="fl-kick" style="font-size:38px">突发新闻</div><div class="big" id="fl-big" style="font-size:150px">灰岭市已沦陷<span class="r">灰岭市已沦陷</span><span class="c">灰岭市已沦陷</span></div></div></div>
+<!-- end card -->
+<div class="layer card" id="L-end">
+  <div class="endwrap" id="end-wrap">
+    <div class="endl">
+      <div class="big" id="end-big">灰岭之夜<span class="r">灰岭之夜</span><span class="c">灰岭之夜</span></div>
+      <div class="en">GRIZZLY RIDGE</div>
+      <div class="line"></div>
+      <div class="play">扫码即玩<small>手机 / 电脑浏览器直接打开 · 无需下载</small></div>
+      <div class="url">pengyuchen2025-ship-it.github.io/grizzly-ridge</div>
+    </div>
+    <div><div class="qr" id="end-qr"><img src="assets/qr.png" alt=""></div><div class="qrcap">试玩链接</div></div>
+  </div>
+  <div class="credit" id="end-credit">模型由 Hi3D 生成 · Three.js 实时渲染 · Ship It Sunday 2026</div>
+</div>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const clamp01 = (k) => Math.max(0, Math.min(1, k));
+  const ease = (k) => { k = clamp01(k); return 1 - Math.pow(1 - k, 3); };
+  const hash = (n) => { const s = Math.sin(n * 127.1 + 311.7) * 43758.5453; return s - Math.floor(s); };
+  // fade in over [a, a+d], out over [b-d2, b]
+  const env = (t, a, d, b, d2) => Math.min(ease((t - a) / d), b == null ? 1 : ease((b - t) / d2));
+  // chromatic glitch on .big elements: bursts at the start, then rare twitches
+  function glitch(el, t, strength = 1) {
+    const f = Math.floor(t * 30), burst = t < 0.35 || hash(f * 0.37) > 0.93;
+    const dx = burst ? (hash(f) - 0.5) * 40 * strength : 4, dy = burst ? (hash(f + 9) - 0.5) * 8 : 0;
+    const r = el.querySelector('.r'), c = el.querySelector('.c');
+    r.style.transform = `translate(${-dx}px,${dy}px)`; c.style.transform = `translate(${dx}px,${-dy}px)`;
+    const cut = burst ? hash(f + 3) * 70 : 62; r.style.clipPath = `inset(0 0 ${cut}% 0)`; c.style.clipPath = `inset(${100 - cut + 4}% 0 0 0)`;
+    el.style.opacity = burst && hash(f + 5) > 0.7 ? 0.6 : 1;
+  }
+  const LOWER = {
+    eat:    ['吞噬', 'EAT', '吃人变大，还能回血'],
+    limbs:  ['变异', 'MUTATE', '被吞下的人，会长成你的手脚'],
+    climb:  ['攀爬', 'CLIMB', '贴着墙一直推，撞碎玻璃爬上楼顶'],
+    slam:   ['砸地', 'SLAM', '从楼顶跃下，冲击波震倒一条街'],
+    police: ['★★ 警方介入', 'WANTED', '警察会开枪，血量归零就结束'],
+    crush:  ['压爆', 'CRUSH', '体积够大，就能把警车压成火球'],
+    gas:    ['引爆', 'BOOM', '加油站 · 三连爆'],
+    heli:   ['击落', 'TAKE DOWN', '爬上楼顶，跳起来撞毁直升机'],
+  };
+  // show(layerName, t, dur, arg): set every element for time t (seconds since the layer started)
+  window.show = (name, t, dur, arg) => {
+    document.querySelectorAll('.layer').forEach((l) => l.classList.remove('on'));
+    const L = $('L-' + name); L.classList.add('on');
+    L.style.opacity = 1;
+    if (name === 'open') {
+      L.style.setProperty('--bar', `${Math.round(120 * (1 - ease(t / 1.2)) + 60)}px`);
+      $('open-bar').style.transform = `translateY(${-80 * (1 - ease((t - 0.3) / 0.5))}px)`;
+      $('open-dot').style.opacity = Math.floor(t * 2) % 2 ? 0.2 : 1;
+      const k = env(t, 0.9, 0.6, dur, 0.4); $('open-place').style.opacity = k; $('open-place').style.transform = `translateX(${-40 * (1 - k)}px)`;
+      $('open-bar').style.opacity = env(t, 0, 0.01, dur, 0.4);
+    }
+    if (name === 'card1') {
+      $('c1-kick').style.opacity = env(t, 0.0, 0.25, dur, 0.15);
+      const big = $('c1-big'); big.style.visibility = t > 0.35 ? 'visible' : 'hidden'; glitch(big, t - 0.35);
+      big.style.transform = `scale(${1.12 - 0.12 * ease((t - 0.35) / 0.5)})`;
+      $('c1-en').style.opacity = env(t, 0.9, 0.5, dur, 0.15) * 0.85;
+    }
+    if (name === 'card2') {
+      const big = $('c2-big'); glitch(big, t); big.style.transform = `scale(${1.1 - 0.1 * ease(t / 0.4)})`;
+      [...$('c2-flow').children].forEach((s, i) => { const k = ease((t - 0.25 - i * 0.12) / 0.2); s.style.opacity = k; s.style.transform = `translateY(${16 * (1 - k)}px)`; });
+    }
+    if (name === 'card3') {
+      $('c3-kick').style.opacity = env(t, 0, 0.25, dur, 0.1);
+      const big = $('c3-big'); big.style.visibility = t > 0.25 ? 'visible' : 'hidden'; glitch(big, t - 0.25);
+    }
+    if (name === 'lower') {
+      const [b, em, sub] = LOWER[arg];
+      $('lw-b').textContent = b; $('lw-em').textContent = em; $('lw-sub').textContent = sub;
+      const k = env(t, 0.05, 0.3, dur, 0.25);
+      $('lower').style.opacity = k; $('lower').style.transform = `translateX(${-60 * (1 - ease((t - 0.05) / 0.3))}px)`;
+      $('lw-sub').style.opacity = env(t, 0.3, 0.3, dur, 0.25);
+    }
+    if (name === 'fallen') {
+      const k = env(t, 0, 0.2, dur, 0.3); L.style.opacity = k;
+      const big = $('fl-big'); glitch(big, t); big.style.transform = `scale(${1.08 - 0.08 * ease(t / 0.5)})`;
+    }
+    if (name === 'end') {
+      const big = $('end-big'); glitch(big, t, 0.7);
+      $('end-wrap').style.opacity = ease(t / 0.5); $('end-wrap').style.transform = `scale(${1.04 - 0.04 * ease(t / 0.8)})`;
+      const q = ease((t - 0.6) / 0.5); $('end-qr').style.opacity = q; $('end-qr').style.transform = `scale(${0.9 + 0.1 * q})`;
+      $('end-credit').style.opacity = env(t, 1.2, 0.6);
+      L.style.opacity = Math.min(1, (dur - t) / 0.6 + 0.0) < 1 ? Math.max(0, (dur - t) / 0.6) : 1;
+    }
+  };
+</script>
+</body>
+</html>

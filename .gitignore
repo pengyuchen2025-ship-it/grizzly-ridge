@@ -2,3 +2,4 @@ node_modules/
 .DS_Store
 assets/models/raw/
 src/models-data.js
+trailer/build/

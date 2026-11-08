@@ -6,8 +6,8 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { buildCity as buildCityScene } from './city.js?v=20261108103727';
-import { GAME, PLAYER, WAVES, CIVILIANS, POLICE, HELI, MODELS, TRAFFIC } from './config.js?v=20261108103727';
+import { buildCity as buildCityScene } from './city.js?v=20261108110840';
+import { GAME, PLAYER, WAVES, CIVILIANS, POLICE, HELI, MODELS, TRAFFIC } from './config.js?v=20261108110840';
 
 // ---------------------------------------------------------------- utils
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -15,6 +15,14 @@ const randi = (a, b) => Math.floor(rand(a, b + 1));
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const $ = (id) => document.getElementById(id);
+// ---- trailer recording mode (?rec=1): fixed-timestep frames driven by tools in trailer/, seeded randomness, scripted input/camera
+const REC = (() => { try { return new URLSearchParams(location.search).has('rec'); } catch (e) { return false; } })();
+const rec = { dt: 1 / 30, clock: 0, input: null, cam: null, events: [], loops: [0, 0], timers: [] };
+if (REC) {
+  let seed = +(new URLSearchParams(location.search).get('seed') || 7) >>> 0;
+  rec.reseed = (s) => { seed = s >>> 0; };
+  Math.random = () => { seed = (seed + 0x6D2B79F5) >>> 0; let t = seed; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
 const V3 = THREE.Vector3;
 const tmpV = new V3(), tmpV2 = new V3(), tmpQ = new THREE.Quaternion();
 
@@ -859,6 +867,7 @@ function toggleMute() { const m = Sfx.toggle(); $('mute').textContent = m ? 'ðŸ”
 $('mute').addEventListener('click', toggleMute);
 
 function inputDir() {
+  if (REC && rec.input) { const { x = 0, z = 0 } = rec.input; const l = Math.hypot(x, z); return l > 1 ? { x: x / l, z: z / l, mag: 1 } : { x, z, mag: l }; }
   let x = 0, z = 0;
   if (keys.has('KeyW') || keys.has('ArrowUp')) z -= 1;
   if (keys.has('KeyS') || keys.has('ArrowDown')) z += 1;
@@ -1212,6 +1221,9 @@ function updateCamera(dt) {
     camera.position.lerp(tmpV.set(player.pos.x + Math.cos(a) * R, player.pos.y + 4 + r * 1.5, player.pos.z + Math.sin(a) * R), Math.min(1, dt * 2));
     camera.lookAt(player.pos.x, player.pos.y + r * 0.4, player.pos.z);
     player.root.position.copy(player.pos);
+  } else if (REC && rec.cam) {
+    rec.cam(camera, dt, shake);
+    shake = Math.max(0, shake - dt * 2.5);
   } else {
   const back = 8 + r * 2.4, up = 22 + r * 4.6;
   const target = tmpV.set(player.pos.x, player.pos.y + up, player.pos.z + back);
@@ -1268,8 +1280,8 @@ function autoQuality(rawDt) {
 }
 let cityT = 0;
 function frame() {
-  requestAnimationFrame(frame);
-  const rawDt = clock.getDelta(); autoQuality(rawDt);
+  if (!REC) requestAnimationFrame(frame);
+  const rawDt = REC ? rec.dt : clock.getDelta(); if (!REC) autoQuality(rawDt);
   let dt = Math.min(rawDt, 1 / 20);
   if (state.running) {
     dt *= state.slowmo;
@@ -1285,7 +1297,7 @@ function frame() {
   for (const e of cityEffects) e.update(dt);
   cityT += dt; if (cityFx) cityFx.update(dt, cityT);
   updateCamera(dt);
-  composer.render();
+  if (!(REC && rec.skipRender)) composer.render();
 }
 
 // ---------------------------------------------------------------- boot
@@ -1313,5 +1325,23 @@ function frame() {
   const start = () => { Sfx.init(); bgm.volume = 0.42; if (bgm.paused) bgm.play().catch(() => {}); document.body.classList.remove('menu'); $('start-screen').classList.add('hidden'); $('result-screen').classList.add('hidden'); resetGame(); };
   $('start-btn').addEventListener('click', start);
   $('restart-btn').addEventListener('click', start);
+  if (REC) {
+    // log sound events with game time (the trailer tools mix the recorded samples afterwards)
+    for (const k of ['eat', 'squelch', 'shot', 'boom', 'glass', 'slam', 'jump', 'roar', 'scream', 'hit', 'bump', 'carAlarm', 'alert']) Sfx[k] = (...a) => { rec.events.push({ n: k, t: +rec.clock.toFixed(4), a }); };
+    Sfx.setLoops = (siren, heli) => { rec.loops = [siren, heli]; };
+    bgm.muted = true;
+    // game-logic timeouts run on the recording clock, not wall time
+    window.setTimeout = (fn, ms = 0) => { rec.timers.push({ at: rec.clock + ms / 1000, fn }); return rec.timers.length; };
+    Object.defineProperties(rec, Object.getOwnPropertyDescriptors({ // (keeps the getters live)
+      step(n = 1) { for (let i = 0; i < n; i++) { rec.clock += rec.dt; const due = rec.timers.filter((t) => t.at <= rec.clock); rec.timers = rec.timers.filter((t) => t.at > rec.clock); due.forEach((t) => { try { t.fn(); } catch (e) { console.error(e); } }); frame(); } },
+      setPixel(p) { pixelScale = p; resize(); },
+      jump() { wantJump = true; },
+      THREE, V3, scene, camera, player, state, buildings, cityCtx, LINES, SPAWN, HALF, bloom, rain, effects,
+      crushCar, explosion, fire, smash, grow, blast, bloodBurst, resetGame, spawnHeli, spawnPoliceCar, spawnPerson, spawnTraffic, spawnRoadblock, spawnSurvivor, growLimb, makeCar, floatText, groundAt, pushOutOfBuildings, absorbVictim,
+      get civilians() { return civilians; }, get cops() { return cops; }, get cars() { return cars; }, get helis() { return helis; },
+      get shake() { return shake; }, set shake(v) { shake = v; },
+    }));
+    window.__rec = rec;
+  }
   window.__gameOverTest = () => damage(9999); window.__game = { state, player, start, gas: cityCtx.gasStation, get civilians() { return civilians; }, get cops() { return cops; }, get cars() { return cars; }, get helis() { return helis; }, stick };
 })();
