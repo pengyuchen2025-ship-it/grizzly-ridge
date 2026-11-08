@@ -6,8 +6,8 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { buildCity as buildCityScene } from './city.js?v=20261108091955';
-import { GAME, PLAYER, WAVES, CIVILIANS, POLICE, HELI, MODELS, TRAFFIC } from './config.js?v=20261108091955';
+import { buildCity as buildCityScene } from './city.js?v=20261108092457';
+import { GAME, PLAYER, WAVES, CIVILIANS, POLICE, HELI, MODELS, TRAFFIC } from './config.js?v=20261108092457';
 
 // ---------------------------------------------------------------- utils
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -1129,7 +1129,10 @@ function frame() {
   buildCity();
   player.pos.set(SPAWN.x, PLAYER.startRadius, SPAWN.z); buildMonsterBody(); buildTentacles();
   camera.position.set(SPAWN.x, 20, SPAWN.z + 22);
-  $('loading').textContent = Object.keys(templates).length ? `已载入 Hi3D 模型 ${Object.keys(templates).length} 个` : '模型由 Hi3D 生成 · 占位模型显示中';
+  let ver = ''; try { const v = new URL(import.meta.url).searchParams.get('v'); if (v && v.length >= 12) ver = ` · 版本 ${v.slice(8, 10)}:${v.slice(10, 12)}`; } catch (e) {}
+  // version stamp is UTC (from the build script); show Beijing time
+  try { const v = new URL(import.meta.url).searchParams.get('v'); if (v && v.length >= 12) { const hh = (parseInt(v.slice(8, 10), 10) + 8) % 24; ver = ` · 版本 ${String(hh).padStart(2, '0')}:${v.slice(10, 12)}`; } } catch (e) {}
+  $('loading').textContent = (Object.keys(templates).length ? `已载入 Hi3D 模型 ${Object.keys(templates).length} 个` : '模型由 Hi3D 生成 · 占位模型显示中') + ver;
   frame();
   const start = () => { Sfx.init(); $('start-screen').classList.add('hidden'); $('result-screen').classList.add('hidden'); resetGame(); };
   $('start-btn').addEventListener('click', start);
