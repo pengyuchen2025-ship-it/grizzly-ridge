@@ -29,15 +29,17 @@ export const PLAYER = {
 
 // 警力随时间升级（秒）
 export const WAVES = [
-  { t: 0,   label: '平静',   stars: 0, cops: 0,  cars: 0, helis: 0 },
-  { t: 12,  label: '报警',   stars: 1, cops: 3,  cars: 0, helis: 0 },
-  { t: 40,  label: '警车出动', stars: 2, cops: 6,  cars: 2, helis: 0 },
-  { t: 75,  label: '直升机',  stars: 3, cops: 8,  cars: 3, helis: 1 },
-  { t: 120, label: '全城戒严', stars: 4, cops: 12, cars: 4, helis: 2 },
-  { t: 170, label: '末日',   stars: 5, cops: 16, cars: 5, helis: 3 },
+  { t: 0,   label: '平静',     stars: 0, cops: 0,  cars: 0, helis: 0, news: 0 },
+  { t: 12,  label: '报警',     stars: 1, cops: 3,  cars: 0, helis: 0, news: 0 },
+  { t: 25,  label: '新闻直升机', stars: 1, cops: 4,  cars: 1, helis: 0, news: 1 },
+  { t: 45,  label: '警车出动',  stars: 2, cops: 7,  cars: 3, helis: 0, news: 1 },
+  { t: 65,  label: '警用直升机', stars: 3, cops: 9,  cars: 3, helis: 2, news: 1 },
+  { t: 100, label: '全城戒严',  stars: 4, cops: 12, cars: 4, helis: 3, news: 1, roadblock: true },
+  { t: 150, label: '末日',     stars: 5, cops: 16, cars: 5, helis: 5, news: 1, roadblock: true },
 ];
+export const TRAFFIC = { count: 10, speed: 10, panicSpeed: 17, panicRadius: 16 };
 
-export const CIVILIANS = { count: 45, fleeRadius: 22, walkSpeed: 2.2, runSpeed: 5.5 };
+export const CIVILIANS = { count: 80, fleeRadius: 22, walkSpeed: 2.2, runSpeed: 5.5 };
 
 export const POLICE = {
   range: 30, keepDistance: 13, speed: 5,

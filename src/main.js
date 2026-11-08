@@ -7,7 +7,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { buildCity as buildCityScene } from './city.js';
-import { GAME, PLAYER, WAVES, CIVILIANS, POLICE, HELI, MODELS } from './config.js';
+import { GAME, PLAYER, WAVES, CIVILIANS, POLICE, HELI, MODELS, TRAFFIC } from './config.js';
 
 // ---------------------------------------------------------------- utils
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -320,7 +320,9 @@ function groundAt(x, z, bottom) {
 // ---------------------------------------------------------------- effects
 const effects = [];
 const sparkTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 16; const x = c.getContext('2d'); const g = x.createRadialGradient(8, 8, 0, 8, 8, 8); g.addColorStop(0, '#fff'); g.addColorStop(0.4, '#ffd27a'); g.addColorStop(1, 'rgba(255,120,30,0)'); x.fillStyle = g; x.fillRect(0, 0, 16, 16); return new THREE.CanvasTexture(c); })();
-let activeBoomLights = 0;
+// fixed light pools (adding/removing lights at runtime forces shader recompiles = stutter)
+const boomLights = Array.from({ length: 3 }, () => { const l = new THREE.PointLight(0xff7a2a, 0, 40, 1.5); scene.add(l); l.userData.busy = false; return l; });
+const spotPool = Array.from({ length: 6 }, () => { const s = new THREE.SpotLight(0xe8f0ff, 0, 70, 0.32, 0.5, 1.4); scene.add(s, s.target); s.userData.busy = false; return s; });
 function explosion(pos, scale = 1) {
   const n = Math.floor(70 * scale);
   const geo = new THREE.BufferGeometry(); const p = new Float32Array(n * 3), vel = [];
@@ -328,8 +330,8 @@ function explosion(pos, scale = 1) {
   geo.setAttribute('position', new THREE.BufferAttribute(p, 3));
   const mat = new THREE.PointsMaterial({ size: 2.2 * scale, map: sparkTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, color: 0xffa040 });
   const pts = new THREE.Points(geo, mat); scene.add(pts);
-  let light = null;
-  if (activeBoomLights < 3) { light = new THREE.PointLight(0xff7a2a, 300 * scale, 40 * scale, 1.5); light.position.copy(pos).y += 2; scene.add(light); activeBoomLights++; }
+  const light = boomLights.find((l) => !l.userData.busy) || null;
+  if (light) { light.userData.busy = true; light.distance = 40 * scale; light.position.copy(pos).y += 2; }
   const debris = [];
   for (let i = 0; i < 8; i++) { const m = new THREE.Mesh(new THREE.BoxGeometry(rand(0.2, 0.6), rand(0.2, 0.5), rand(0.2, 0.6)), MAT.wreck); m.position.copy(pos).y += 1; scene.add(m); debris.push({ m, v: new V3(rand(-8, 8), rand(6, 14), rand(-8, 8)) }); }
   effects.push({ life: 1.3, max: 1.3, update(dt) {
@@ -339,7 +341,7 @@ function explosion(pos, scale = 1) {
     const k = this.life / this.max; mat.opacity = k; mat.color.setHSL(0.07 * k, 1, 0.35 + 0.3 * k);
     if (light) light.intensity = 300 * scale * k * k;
     for (const d of debris) { d.v.y -= 30 * dt; d.m.position.addScaledVector(d.v, dt); d.m.rotation.x += dt * 8; if (d.m.position.y < 0.2) { d.m.position.y = 0.2; d.v.set(0, 0, 0); } }
-  }, dispose() { scene.remove(pts); geo.dispose(); mat.dispose(); if (light) { scene.remove(light); activeBoomLights--; } debris.forEach((d) => scene.remove(d.m)); } });
+  }, dispose() { scene.remove(pts); geo.dispose(); mat.dispose(); if (light) { light.intensity = 0; light.userData.busy = false; } debris.forEach((d) => scene.remove(d.m)); } });
   shake = Math.max(shake, 0.8 * scale);
 }
 function fire(pos, life = 6, list = effects) {
@@ -554,13 +556,39 @@ function spawnPoliceCar() {
   const c = { mesh, pos: mesh.position, police: true, lights, state: 'drive', ix, iz, tx: ix, tz: iz, deployed: false, vy: 0, spin: 0, flash: rand(0, 1) };
   cars.push(c); return c;
 }
-function spawnHeli() {
+function spawnTraffic() {
+  let ix, iz, tries = 0;
+  do { ix = randi(0, N); iz = randi(0, N); tries++; } while (Math.hypot(LINES[ix] - player.pos.x, LINES[iz] - player.pos.z) < 40 && tries < 30);
+  const { mesh } = makeCar(false); mesh.position.set(LINES[ix] + 2.4, 0, LINES[iz] + 2.4); scene.add(mesh);
+  const c = { mesh, pos: mesh.position, police: false, traffic: true, state: 'drive', ix, iz, tx: ix, tz: iz, vy: 0, spin: 0 };
+  nextIntersection(c, 'random'); cars.push(c); return c;
+}
+function spawnRoadblock() {
+  // nearest intersection 25–50 units from the monster: three police cars in a row + officers
+  let best = null, bd = 1e9;
+  for (const a of LINES) for (const b of LINES) { const d = Math.hypot(a - player.pos.x, b - player.pos.z); if (d > 25 && d < 50 && d < bd) { bd = d; best = [a, b]; } }
+  if (!best) return;
+  const horizontal = Math.random() < 0.5;
+  for (let k = -1; k <= 1; k++) {
+    const { mesh, lights } = makeCar(true);
+    mesh.position.set(best[0] + (horizontal ? k * 3.2 : 0), 0, best[1] + (horizontal ? 0 : k * 3.2)); mesh.rotation.y = horizontal ? Math.PI / 2 + rand(-0.3, 0.3) : rand(-0.3, 0.3);
+    scene.add(mesh);
+    cars.push({ mesh, pos: mesh.position, police: true, lights, state: 'stop', ix: 0, iz: 0, tx: 0, tz: 0, deployed: true, vy: 0, spin: 0, flash: rand(0, 1), roadblock: true });
+  }
+  for (let k = 0; k < 4; k++) spawnPerson('police', new V3(best[0], 0, best[1]));
+  centerMsg('前方警方路障！', '撞过去，把警车全部压爆', 2400);
+}
+function spawnHeli(news = false) {
   const { mesh, rotor, tailRotor } = makeHeli();
+  if (news) mesh.traverse((o) => { if (o.isMesh && o !== rotor) { o.material = o.material.clone(); o.material.color && o.material.color.lerp(new THREE.Color(0xffd23a), 0.55); } });
   const a = rand(0, Math.PI * 2);
   mesh.position.set(player.pos.x + Math.cos(a) * 90, 30, player.pos.z + Math.sin(a) * 90);
   scene.add(mesh);
-  const spot = new THREE.SpotLight(0xe8f0ff, 900, 70, 0.32, 0.5, 1.4); spot.position.set(0, -1, 0); mesh.add(spot); mesh.add(spot.target);
-  const h = { mesh, rotor, tailRotor, spot, pos: mesh.position, angle: a, alt: rand(HELI.altitudeMin, HELI.altitudeMax), fireT: 1.5, state: 'fly', vy: 0, life: 0 };
+  const spot = spotPool.find((l) => !l.userData.busy) || { intensity: 0, position: new V3(), target: { position: new V3() }, userData: {} };
+  spot.userData.busy = true; spot.intensity = 900;
+  if (news) spot.intensity = 500;
+  const h = { mesh, rotor, tailRotor, spot, news, pos: mesh.position, angle: a, alt: news ? rand(11, 16) : rand(HELI.altitudeMin, HELI.altitudeMax), fireT: 1.5, state: 'fly', vy: 0, life: 0, diveT: rand(5, 9), dive: 0 };
+  if (news) centerMsg('新闻直升机来了', '它飞得很低，跳起来撞它！', 2200);
   helis.push(h); return h;
 }
 
@@ -571,14 +599,14 @@ let shake = 0;
 function resetGame() {
   for (const e of [...civilians, ...cops]) scene.remove(e.mesh);
   for (const c of cars) scene.remove(c.mesh);
-  for (const h of helis) scene.remove(h.mesh);
+  for (const h of helis) { scene.remove(h.mesh); h.spot.intensity = 0; h.spot.userData.busy = false; }
   civilians = []; cops = []; cars = []; helis = [];
   effects.splice(0).forEach((e) => e.dispose());
   player.attached = [];
   Object.assign(player, { r: PLAYER.startRadius, targetR: PLAYER.startRadius, hp: PLAYER.maxHp, grounded: true, climbing: false });
   player.pos.set(SPAWN.x, PLAYER.startRadius, SPAWN.z); player.vel.set(0, 0, 0);
   buildMonsterBody(); buildTentacles();
-  Object.assign(state, { running: true, over: false, t: 0, wave: 0, eaten: 0, carsCrushed: 0, helisDown: 0, crushReady: false, toldClimb: false, spawnT: { cop: 5, car: 0, heli: 0 }, slowmo: 1 });
+  Object.assign(state, { roadblockWave: -1, running: true, over: false, t: 0, wave: 0, eaten: 0, carsCrushed: 0, helisDown: 0, crushReady: false, toldClimb: false, spawnT: { cop: 5, car: 0, heli: 0 }, slowmo: 1 });
   for (let i = 0; i < CIVILIANS.count; i++) { const e = spawnPerson(Math.random() < 0.5 ? 'man' : 'woman'); if (i < 14) { const p = randomStreetPoint(null); for (let k = 0; k < 30 && Math.hypot(p.x - SPAWN.x, p.z - SPAWN.z) > 26; k++) p.copy(randomStreetPoint(null)); if (Math.hypot(p.x - SPAWN.x, p.z - SPAWN.z) > 6) e.pos.copy(p); } }
   spawnParkedCars();
   camera.position.set(SPAWN.x, 20, SPAWN.z + 22);
@@ -730,11 +758,13 @@ function updatePeople(dt, list, isCop) {
 }
 
 // ---------------------------------------------------------------- update: cars
-function nextIntersection(c) {
+function nextIntersection(c, mode = 'chase') {
   const ix = c.tx, iz = c.tz;
   const opts = [[ix + 1, iz], [ix - 1, iz], [ix, iz + 1], [ix, iz - 1]].filter(([a, b]) => a >= 0 && a <= N && b >= 0 && b <= N && !(a === c.ix && b === c.iz));
-  opts.sort((A, B) => Math.hypot(LINES[A[0]] - player.pos.x, LINES[A[1]] - player.pos.z) - Math.hypot(LINES[B[0]] - player.pos.x, LINES[B[1]] - player.pos.z));
-  const choice = Math.random() < 0.85 ? opts[0] : pick(opts);
+  const dist = (A) => Math.hypot(LINES[A[0]] - player.pos.x, LINES[A[1]] - player.pos.z);
+  opts.sort((A, B) => dist(A) - dist(B));
+  if (mode === 'flee') opts.reverse();
+  const choice = mode === 'random' ? pick(opts) : (Math.random() < 0.85 ? opts[0] : pick(opts));
   c.ix = ix; c.iz = iz; c.tx = choice[0]; c.tz = choice[1];
 }
 function updateCars(dt) {
@@ -748,6 +778,16 @@ function updateCars(dt) {
     }
     if (c.state === 'wreck') continue;
     if (c.hop > 0) { c.hop -= dt; c.pos.y = Math.max(0, Math.sin((1 - c.hop / 0.5) * Math.PI) * 1.3); if (c.hop <= 0) c.pos.y = 0; }
+    // civilian traffic
+    if (c.traffic && c.state === 'drive') {
+      const dToP = Math.hypot(c.pos.x - pp.x, c.pos.z - pp.z);
+      const panic = dToP < TRAFFIC.panicRadius;
+      const tx = LINES[c.tx], tz = LINES[c.tz];
+      const dx = tx - c.pos.x, dz = tz - c.pos.z, d = Math.hypot(dx, dz);
+      if (d < 0.6) nextIntersection(c, panic ? 'flee' : 'random');
+      else { const sp = panic ? TRAFFIC.panicSpeed : TRAFFIC.speed; c.pos.x += (dx / d) * Math.min(d, sp * dt); c.pos.z += (dz / d) * Math.min(d, sp * dt); c.mesh.rotation.y = Math.atan2(-dz, dx); }
+      if (panic && !c.honkT) { c.honkT = 1; Sfx.bump(); }
+    }
     // police driving
     if (c.police) {
       c.flash += dt * 6;
@@ -760,7 +800,7 @@ function updateCars(dt) {
         if (d < 0.6) nextIntersection(c);
         else { const sp = 16; c.pos.x += (dx / d) * Math.min(d, sp * dt); c.pos.z += (dz / d) * Math.min(d, sp * dt); c.mesh.rotation.y = Math.atan2(-dz, dx); }
         if (dToP < 20) { c.state = 'stop'; if (!c.deployed) { c.deployed = true; for (let k = 0; k < 2; k++) spawnPerson('police', c.pos); } }
-      } else if (c.state === 'stop' && dToP > 40) { c.state = 'drive'; }
+      } else if (c.state === 'stop' && dToP > 40 && !c.roadblock) { c.state = 'drive'; }
     }
     // collision with monster
     const d = Math.hypot(c.pos.x - pp.x, c.pos.z - pp.z);
@@ -775,14 +815,19 @@ function updateCars(dt) {
     }
   }
 }
-function crushCar(c) {
+function blast(pos, R) {
+  for (let k = cops.length - 1; k >= 0; k--) { const e = cops[k]; if (e.pos.distanceTo(pos) < R) { bloodPool(e.pos.x, e.pos.z, 0.22, 2); scene.remove(e.mesh); cops.splice(k, 1); } }
+  for (const e of civilians) if (e.pos.distanceTo(pos) < R * 1.3) e.knock = rand(1.4, 2.4);
+  for (const c of cars) if (c.state !== 'wreck' && c.state !== 'flying' && c.pos.distanceTo(pos) < R * 0.8) { setTimeout(() => { if (state.running && c.state !== 'wreck' && c.state !== 'flying') crushCar(c, true); }, rand(200, 550)); }
+}
+function crushCar(c, chained = false) {
   c.state = 'flying'; c.vy = 12; c.spin = rand(3, 6) * (Math.random() < 0.5 ? 1 : -1);
   c.mesh.traverse((o) => { if (o.isMesh) o.material = MAT.wreck; });
   explosion(tmpV.copy(c.pos), 1); fire(c.pos.clone(), 8); Sfx.boom();
   state.carsCrushed++; grow(PLAYER.carVolume);
   floatText(tmpV2.copy(c.pos).setY(3), c.police ? '警车 轰！' : '轰！', 'boom');
-  // blast kills nearby cops
-  for (let i = cops.length - 1; i >= 0; i--) { const e = cops[i]; if (e.pos.distanceTo(c.pos) < 6) { scene.remove(e.mesh); cops.splice(i, 1); } }
+  if (chained) floatText(tmpV2.copy(c.pos).setY(4), '连环爆炸！', 'boom');
+  blast(c.pos.clone(), 6.5);
 }
 
 // ---------------------------------------------------------------- update: helicopters
@@ -793,27 +838,32 @@ function updateHelis(dt) {
     h.rotor.rotation.y += dt * 30; h.tailRotor.rotation.z += dt * 40;
     if (h.state === 'falling') {
       h.vy -= 22 * dt; h.pos.y += h.vy * dt; h.mesh.rotation.y += dt * 6; h.mesh.rotation.z += dt * 1.5;
-      if (h.pos.y < 1.5) { explosion(h.pos.clone().setY(1), 1.8); fire(h.pos.clone().setY(0), 10); Sfx.boom(); scene.remove(h.mesh); helis.splice(i, 1); }
+      const gy = groundAt(h.pos.x, h.pos.z, h.pos.y);
+      if (h.pos.y < gy + 1.5) { explosion(h.pos.clone().setY(gy + 1), 2.2); fire(h.pos.clone().setY(gy), 14); Sfx.boom(); scene.remove(h.mesh); h.spot.intensity = 0; h.spot.userData.busy = false; helis.splice(i, 1); blast(h.pos.clone().setY(gy), 10); }
       continue;
     }
-    h.angle += dt * 0.35;
-    h.alt += Math.sin(state.t * 0.5 + i) * dt * 2;
-    h.alt = clamp(h.alt, HELI.altitudeMin, HELI.altitudeMax);
-    const tx = pp.x + Math.cos(h.angle) * HELI.orbitRadius, tz = pp.z + Math.sin(h.angle) * HELI.orbitRadius;
-    h.pos.x += (tx - h.pos.x) * Math.min(1, dt * 0.8); h.pos.z += (tz - h.pos.z) * Math.min(1, dt * 0.8); h.pos.y += (h.alt - h.pos.y) * Math.min(1, dt);
+    h.angle += dt * (h.news ? 0.25 : 0.35);
+    if (!h.news) { h.alt += Math.sin(state.t * 0.5 + i) * dt * 2; h.alt = clamp(h.alt, HELI.altitudeMin, HELI.altitudeMax); }
+    h.diveT -= dt; if (h.diveT <= 0 && !h.dive) { h.dive = 3.5; h.diveT = rand(7, 12); }
+    let alt = h.alt, orbit = h.news ? 18 : HELI.orbitRadius;
+    if (h.dive > 0) { h.dive = Math.max(0, h.dive - dt); alt = Math.max(7, pp.y + 3); orbit = 9; }
+    const tx = pp.x + Math.cos(h.angle) * orbit, tz = pp.z + Math.sin(h.angle) * orbit;
+    h.pos.x += (tx - h.pos.x) * Math.min(1, dt * 0.8); h.pos.z += (tz - h.pos.z) * Math.min(1, dt * 0.8); h.pos.y += (alt - h.pos.y) * Math.min(1, dt * (h.dive ? 1.6 : 1));
+    // jump assist: while rising, drift toward a nearby helicopter above you
+    if (!player.grounded && player.vel.y > 0 && h.pos.y > pp.y) { const hx = h.pos.x - pp.x, hz = h.pos.z - pp.z; if (Math.hypot(hx, hz) < 15) { player.vel.x += hx * dt * 2.5; player.vel.z += hz * dt * 2.5; } }
     h.mesh.rotation.y = Math.atan2(-(pp.z - h.pos.z), pp.x - h.pos.x);
     h.mesh.rotation.z = -0.12;
-    h.spot.target.position.copy(tmpV.copy(pp).sub(h.pos).applyQuaternion(tmpQ.copy(h.mesh.quaternion).invert()));
+    h.spot.position.copy(h.pos).y -= 1; h.spot.target.position.copy(pp);
     h.fireT -= dt;
     const d3 = h.pos.distanceTo(pp);
-    if (h.fireT <= 0 && d3 < 60 && !state.over) {
+    if (!h.news && h.fireT <= 0 && d3 < 60 && !state.over) {
       h.fireT = HELI.fireInterval * rand(0.7, 1.4);
       const hit = Math.random() < HELI.hitChance;
       tracer(tmpV.copy(h.pos).setY(h.pos.y - 1.5), tmpV2.copy(pp).add(new V3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).multiplyScalar(hit ? pr * 0.5 : pr * 2.5)));
       Sfx.shot(0.18); if (hit) damage(HELI.damage);
     }
     // monster hits heli
-    if (d3 < pr + 3.6) {
+    if (d3 < pr + 4.6) {
       h.state = 'falling'; h.vy = 4; state.helisDown++; grow(PLAYER.heliVolume);
       explosion(h.pos.clone(), 1.2); Sfx.boom(); shake = 1.2;
       floatText(tmpV2.copy(h.pos).setY(h.pos.y + 2), '击落直升机！', 'boom');
@@ -832,7 +882,12 @@ function updateWaves(dt) {
   state.spawnT.cop -= dt; state.spawnT.car -= dt; state.spawnT.heli -= dt;
   if (cops.length < W.cops && state.spawnT.cop <= 0) { spawnPerson('police'); state.spawnT.cop = 1.4; }
   if (policeCars < W.cars && state.spawnT.car <= 0) { spawnPoliceCar(); state.spawnT.car = 5; }
-  if (helis.filter((h) => h.state !== 'falling').length < W.helis && state.spawnT.heli <= 0) { spawnHeli(); state.spawnT.heli = 8; }
+  const liveHelis = helis.filter((h) => h.state !== 'falling');
+  if (liveHelis.filter((h) => !h.news).length < W.helis && state.spawnT.heli <= 0) { spawnHeli(false); state.spawnT.heli = 6; }
+  if (liveHelis.filter((h) => h.news).length < (W.news || 0) && state.spawnT.heli <= 0) { spawnHeli(true); state.spawnT.heli = 6; }
+  state.spawnT.traffic = (state.spawnT.traffic || 0) - dt;
+  if (cars.filter((c) => c.traffic && c.state === 'drive').length < TRAFFIC.count && state.spawnT.traffic <= 0) { spawnTraffic(); state.spawnT.traffic = 1.5; }
+  if (W.roadblock && state.roadblockWave !== state.wave) { state.roadblockWave = state.wave; spawnRoadblock(); }
   Sfx.setLoops(policeCars > 0 ? 1 : 0, helis.length > 0 ? 1 : 0);
 }
 
@@ -903,10 +958,24 @@ function updateHUD(dt) {
 
 // ---------------------------------------------------------------- main loop
 const clock = new THREE.Clock();
+const perf = { t: 0, frames: 0, level: 0 };
+function autoQuality(rawDt) {
+  if (!state.running) return;
+  perf.t += rawDt; perf.frames++;
+  if (perf.t < 3) return;
+  const fps = perf.frames / perf.t; perf.t = 0; perf.frames = 0;
+  if (fps < 28 && perf.level < 2) {
+    perf.level++;
+    if (perf.level === 1) { pixelScale = Math.max(pixelScale, 3); resize(); }
+    if (perf.level === 2) { bloom.enabled = false; rain.visible = false; }
+    console.info('auto quality ->', perf.level, 'fps', fps.toFixed(1));
+  }
+}
 let cityT = 0;
 function frame() {
   requestAnimationFrame(frame);
-  let dt = Math.min(clock.getDelta(), 1 / 20);
+  const rawDt = clock.getDelta(); autoQuality(rawDt);
+  let dt = Math.min(rawDt, 1 / 20);
   if (state.running) {
     dt *= state.slowmo;
     state.t += dt;
