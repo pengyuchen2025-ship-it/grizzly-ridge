@@ -54,9 +54,9 @@ export const HELI = {
 // rotY: 如果模型朝向不对，用弧度旋转修正
 export const MODELS = {
   monster:    { fit: 'size',   value: 2.0, rotY: 0 },
-  civ_man:    { fit: 'height', value: 1.8, rotY: 0 },
-  civ_woman:  { fit: 'height', value: 1.75, rotY: 0 },
-  police:     { fit: 'height', value: 1.85, rotY: 0 },
+  civ_man:    { fit: 'height', value: 2.3, rotY: 0 },
+  civ_woman:  { fit: 'height', value: 2.2, rotY: 0 },
+  police:     { fit: 'height', value: 2.35, rotY: 0 },
   police_car: { fit: 'length', value: 5.0, rotY: 0 },
   car:        { fit: 'length', value: 4.7, rotY: 0 },
   helicopter: { fit: 'length', value: 11,  rotY: 0 },

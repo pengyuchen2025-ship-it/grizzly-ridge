@@ -124,10 +124,18 @@ async function loadModels() {
   let ids = [];
   try { const r = await fetch('assets/models/manifest.json', { cache: 'no-store' }); if (r.ok) ids = await r.json(); } catch (e) {}
   const loader = new GLTFLoader(); loader.setMeshoptDecoder(MeshoptDecoder);
-  await Promise.allSettled(ids.filter((id) => MODELS[id]).map((id) => new Promise((res) => {
-    loader.load(`assets/models/${id}.glb`, (g) => { templates[id] = normalizeModel(g.scene, MODELS[id]); res(); },
-      undefined, (err) => { console.warn('model failed', id, err); res(); });
-  })));
+  // preview builds embed the GLBs as base64 (src/models-data.js); normal deploys load the .glb files
+  let embedded = null;
+  try { embedded = (await import('./models-data.js')).default; } catch (e) {}
+  const getBuffer = async (id) => {
+    if (embedded && embedded[id]) { const bin = atob(embedded[id]); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u.buffer; }
+    const r = await fetch(`assets/models/${id}.glb`); if (!r.ok) throw new Error(r.status); return r.arrayBuffer();
+  };
+  if (embedded) ids = [...new Set([...ids, ...Object.keys(embedded)])];
+  await Promise.allSettled(ids.filter((id) => MODELS[id]).map(async (id) => {
+    try { const buf = await getBuffer(id); const g = await loader.parseAsync(buf, ''); templates[id] = normalizeModel(g.scene, MODELS[id]); }
+    catch (err) { console.warn('model failed', id, err); }
+  }));
 }
 function normalizeModel(root, cfg) {
   const wrap = new THREE.Group();
@@ -513,7 +521,7 @@ function spawnPerson(kind, near) {
   return e;
 }
 function spawnParkedCars() {
-  for (let i = 0; i < 26; i++) {
+  for (let i = 0; i < 14; i++) {
     const L = pick(LINES), along = rand(-HALF + 6, HALF - 6), side = Math.random() < 0.5 ? -3.3 : 3.3;
     const horizontal = Math.random() < 0.5;
     const pos = horizontal ? new V3(along, 0, L + side) : new V3(L + side, 0, along);
@@ -832,7 +840,7 @@ function segHitsBox(ax, az, bx, bz, b) {
 }
 function updateCamera(dt) {
   const r = player.r;
-  const back = 10 + r * 3.2, up = 15 + r * 4.2;
+  const back = 7 + r * 2.4, up = 19 + r * 4.6;
   const target = tmpV.set(player.pos.x, player.pos.y + up, player.pos.z + back);
   camera.position.lerp(target, Math.min(1, dt * 4));
   if (shake > 0) { camera.position.x += rand(-1, 1) * shake; camera.position.y += rand(-1, 1) * shake; shake = Math.max(0, shake - dt * 2.5); }
