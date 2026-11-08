@@ -6,8 +6,8 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { buildCity as buildCityScene } from './city.js?v=20261108090724';
-import { GAME, PLAYER, WAVES, CIVILIANS, POLICE, HELI, MODELS, TRAFFIC } from './config.js?v=20261108090724';
+import { buildCity as buildCityScene } from './city.js?v=20261108091955';
+import { GAME, PLAYER, WAVES, CIVILIANS, POLICE, HELI, MODELS, TRAFFIC } from './config.js?v=20261108091955';
 
 // ---------------------------------------------------------------- utils
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -553,40 +553,61 @@ function grow(vol) { player.targetR = Math.cbrt(player.targetR ** 3 + vol); }
 
 // each eaten person leaves an arm or a leg sticking out of the mass, flailing; they roll with the body
 player.limbs = [];
-const LIMB_SKIN = [0xe8c2a4, 0xd9a888, 0xb57c5c, 0xf0d0b8].map((c) => M(c));
-const LIMB_PANTS = [0x5d6f8c, 0x7a6a55, 0x4f5a66, 0x8a8478].map((c) => M(c));
-const limbGeo = { seg: new THREE.CylinderGeometry(0.09, 0.11, 1, 6).translate(0, 0.5, 0), hand: new THREE.BoxGeometry(0.16, 0.22, 0.08).translate(0, 0.11, 0), foot: new THREE.BoxGeometry(0.16, 0.12, 0.32).translate(0, 0.06, 0.08) };
+const LIMB_SKIN = [0xc79a7e, 0xb8876a, 0x9a6a50, 0xcfa58c].map((c) => M(c));
+const LIMB_PANTS = [0x3f4b5e, 0x5a4c3c, 0x3c444e, 0x5e5850].map((c) => M(c));
+const STUMP = M(0x5a0f14);
+const limbGeo = {
+  upper: new THREE.CylinderGeometry(0.075, 0.105, 1, 6).translate(0, 0.5, 0),   // thick at the shoulder/hip, thinner at the elbow/knee
+  lower: new THREE.CylinderGeometry(0.06, 0.08, 1, 6).translate(0, 0.5, 0),
+  joint: new THREE.IcosahedronGeometry(0.085, 0),
+  hand: new THREE.BoxGeometry(0.15, 0.2, 0.07).translate(0, 0.1, 0),
+  foot: new THREE.BoxGeometry(0.15, 0.11, 0.3).translate(0, 0.055, 0.07),
+  stump: new THREE.IcosahedronGeometry(0.17, 0).scale(1, 0.6, 1),
+};
 function growLimb(isCop) {
   const leg = Math.random() < 0.45;
   const skin = pick(LIMB_SKIN), cloth = isCop ? MAT.police : (leg ? pick(LIMB_PANTS) : skin);
   const root = new THREE.Group();
-  const upperLen = leg ? 0.5 : 0.36, lowerLen = leg ? 0.48 : 0.34;
-  const upper = new THREE.Mesh(limbGeo.seg, cloth); upper.scale.set(leg ? 1.3 : 1, upperLen, leg ? 1.3 : 1);
+  const upperLen = leg ? 0.42 : 0.3, lowerLen = leg ? 0.4 : 0.27;
+  const stump = new THREE.Mesh(limbGeo.stump, STUMP);
+  const upper = new THREE.Mesh(limbGeo.upper, cloth); upper.scale.set(leg ? 1.35 : 1, upperLen, leg ? 1.35 : 1);
   const joint = new THREE.Group(); joint.position.y = upperLen;
-  const lower = new THREE.Mesh(limbGeo.seg, leg ? cloth : skin); lower.scale.set(leg ? 1.1 : 0.85, lowerLen, leg ? 1.1 : 0.85);
+  const knob = new THREE.Mesh(limbGeo.joint, leg ? cloth : skin); knob.scale.setScalar(leg ? 1.2 : 0.9);
+  const lower = new THREE.Mesh(limbGeo.lower, leg ? cloth : skin); lower.scale.set(leg ? 1.3 : 1, lowerLen, leg ? 1.3 : 1);
   const tip = new THREE.Mesh(leg ? limbGeo.foot : limbGeo.hand, leg ? (Math.random() < 0.5 ? skin : MAT.tire) : skin); tip.position.y = lowerLen;
-  joint.add(lower, tip); root.add(upper, joint);
+  joint.add(knob, lower, tip); root.add(stump, upper, joint);
   root.traverse((o) => { if (o.isMesh) o.castShadow = true; });
-  // place on the surface, pointing outward (local space of the rolling body, radius ~0.72)
   const dir = new V3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).normalize();
-  root.position.copy(dir).multiplyScalar(0.74);
+  root.position.copy(dir).multiplyScalar(0.72);
   root.quaternion.setFromUnitVectors(new V3(0, 1, 0), dir);
   player.roll.add(root);
-  const L = { root, joint, phase: rand(0, 6.28), speed: rand(5, 11), born: state.t, base: root.quaternion.clone() };
+  const L = { root, joint, born: state.t, base: root.quaternion.clone(),
+    cur: new THREE.Euler(), from: new THREE.Euler(), to: new THREE.Euler(rand(-0.4, 0.4), 0, rand(-0.4, 0.4)),
+    bendCur: 0.3, bendFrom: 0.3, bendTo: rand(0.1, 1.0), snapT: 0, holdT: rand(0.2, 1.0) };
   player.limbs.push(L);
   if (player.limbs.length > 45) { const old = player.limbs.shift(); player.roll.remove(old.root); }
 }
-const limbQ = new THREE.Quaternion(), limbE = new THREE.Euler();
-function updateLimbs() {
+const limbQ = new THREE.Quaternion();
+const SNAP = 0.07; // seconds for a twitch
+function updateLimbs(dt) {
   const r = player.r, t = state.t;
-  // keep limbs at human size in the world (slightly larger as the monster grows so they stay readable)
-  const world = 1.9 + 0.25 * Math.max(0, r - PLAYER.startRadius);
+  const world = 1.1; // real human proportions; does not grow with the monster
   for (const L of player.limbs) {
-    const grow = Math.min(1, (t - L.born) / 0.45);
-    L.root.scale.setScalar((world / r) * grow);
-    limbE.set(Math.sin(t * L.speed + L.phase) * 0.55, 0, Math.cos(t * L.speed * 0.8 + L.phase) * 0.55);
-    L.root.quaternion.copy(L.base).multiply(limbQ.setFromEuler(limbE));
-    L.joint.rotation.x = 0.4 + Math.sin(t * L.speed * 1.3 + L.phase) * 0.7;
+    const g = Math.min(1, (t - L.born) / 0.35);
+    L.root.scale.setScalar((world / r) * g);
+    // stiff, twitchy motion: hold a pose, then snap to a new one
+    if (L.snapT > 0) {
+      L.snapT = Math.max(0, L.snapT - dt); const k = 1 - L.snapT / SNAP;
+      L.cur.set(L.from.x + (L.to.x - L.from.x) * k, 0, L.from.z + (L.to.z - L.from.z) * k);
+      L.bendCur = L.bendFrom + (L.bendTo - L.bendFrom) * k;
+    } else if ((L.holdT -= dt) <= 0) {
+      L.from.copy(L.cur); L.bendFrom = L.bendCur;
+      L.to.set(rand(-0.45, 0.45), 0, rand(-0.45, 0.45)); L.bendTo = rand(0.05, 1.1);
+      L.snapT = SNAP; L.holdT = Math.random() < 0.25 ? rand(0.05, 0.15) : rand(0.35, 1.3); // sometimes a quick double twitch
+    }
+    const tremor = 0.02 * Math.sin(t * 47 + L.born * 13); // tiny constant shiver
+    L.root.quaternion.copy(L.base).multiply(limbQ.setFromEuler(new THREE.Euler(L.cur.x + tremor, 0, L.cur.z)));
+    L.joint.rotation.x = L.bendCur;
   }
 }
 
@@ -774,7 +795,7 @@ function updatePlayer(dt) {
   player.root.position.copy(player.pos);
   player.gulp = Math.max(0, (player.gulp || 0) - dt);
   player.roll.scale.setScalar(r * (1 + Math.sin(player.gulp * 18) * player.gulp * 0.5));
-  updateLimbs();
+  updateLimbs(dt);
   const hv = Math.hypot(player.vel.x, player.vel.z);
   if (hv > 0.05) {
     tmpV.set(player.vel.z, 0, -player.vel.x).normalize();
