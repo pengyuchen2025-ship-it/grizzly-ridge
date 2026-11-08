@@ -112,8 +112,20 @@ if '--no-overlays' not in args:
 
 # ------------------------------------------------------------------ video segments
 SEGDIR = os.path.join(BUILD, 'segments'); shutil.rmtree(SEGDIR, ignore_errors=True); os.makedirs(SEGDIR)
-def is_black(path):
-    im = Image.open(path).convert('L').resize((96, 54)); return np.asarray(im).mean() < 4
+def repair_shot(name):
+    # the software renderer occasionally hands back a half-drawn frame (big pure-black area): replace it with a blend of its neighbours
+    import glob
+    fs = sorted(glob.glob(os.path.join(SHOTS, name, '*.jpg')))
+    dk = [(np.asarray(Image.open(f).convert('L').resize((96, 54))) < 6).mean() for f in fs]
+    bad = {i for i in range(len(fs)) if dk[i] > 0.9 or dk[i] - min(dk[max(0, i - 1)], dk[min(len(fs) - 1, i + 1)]) > 0.15}
+    for i in sorted(bad):
+        a = next((j for j in range(i - 1, -1, -1) if j not in bad), None); b = next((j for j in range(i + 1, len(fs)) if j not in bad), None)
+        if a is None and b is None: continue
+        im = Image.open(fs[a if b is None else b]) if a is None or b is None else Image.blend(Image.open(fs[a]), Image.open(fs[b]), 0.5)
+        im.save(fs[i], quality=93)
+    if bad: print(f'  repaired {len(bad)} glitched frames in {name}: {sorted(j + 1 for j in bad)}')
+for s in segs:
+    if s['kind'] == 'shot': repair_shot(s['name'])
 seg_files = []
 for i, s in enumerate(segs):
     out = os.path.join(SEGDIR, f'{i:02d}.mp4'); seg_files.append(out)
@@ -122,11 +134,9 @@ for i, s in enumerate(segs):
     if s['kind'] == 'shot':
         stage = os.path.join(SEGDIR, f'{i:02d}_src'); os.makedirs(stage)
         src = os.path.join(SHOTS, s['name']); total = s['meta']['frames']
-        first_f = int(round(s['in'] * FPS)) + 1; last_good = None
+        first_f = int(round(s['in'] * FPS)) + 1
         for k in range(n):
             fidx = min(total, first_f + k); p = os.path.join(src, f'{fidx:04d}.jpg')
-            if is_black(p) and last_good: p = last_good  # occasional blank frame from the software renderer
-            else: last_good = p
             os.symlink(p, os.path.join(stage, f'{k + 1:04d}.jpg'))
         inputs += ['-framerate', str(FPS), '-i', os.path.join(stage, '%04d.jpg')]
     else:

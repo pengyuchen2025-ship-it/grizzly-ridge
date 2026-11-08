@@ -117,7 +117,7 @@
 
   // 6. 楼顶跃下砸地：冲击波震倒行人
   S.slam = {
-    frames: 105,
+    frames: 125,
     setup() {
       H.clearPeople(-60, 45, 30);
       H.place(-43, 45, 2.4, 18.1); H.limbs(20);
@@ -133,13 +133,13 @@
 
   // 7. 警方到场（停顿段）：警车闪灯、警察举枪
   S.police = {
-    frames: 105,
+    frames: 125,
     setup() {
       H.clearPeople(-30, 22, 40); H.clearCars(-30, 15, 30);
       H.place(-30, 30, 2.7); H.limbs(26);
       const c1 = H.parked(-31.5, 12, Math.PI / 2 + 0.25, true), c2 = H.parked(-27, 15.5, Math.PI / 2 - 0.5, true);
       for (const [x, z] of [[-34, 15], [-29, 18], [-25, 19], [-33.5, 19.5]]) { const e = R.spawnPerson('police', v(x, 0, z)); e.pos.set(x, 0, z); }
-      H.cam((t) => lerpV(v(-26.5, 1.1, 6.5), v(-27.5, 1.3, 8.5), t / 3.5), () => v(-30, 2.2, 28), 46);
+      H.cam((t) => lerpV(v(-26.5, 1.1, 6.5), v(-27.5, 1.3, 8.5), t / 4.2), () => v(-30, 2.2, 28), 46);
     },
     tick() { R.input = null; },
   };
