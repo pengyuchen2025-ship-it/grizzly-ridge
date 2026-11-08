@@ -6,8 +6,8 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { buildCity as buildCityScene } from './city.js?v=20261108101141';
-import { GAME, PLAYER, WAVES, CIVILIANS, POLICE, HELI, MODELS, TRAFFIC } from './config.js?v=20261108101141';
+import { buildCity as buildCityScene } from './city.js?v=20261108101241';
+import { GAME, PLAYER, WAVES, CIVILIANS, POLICE, HELI, MODELS, TRAFFIC } from './config.js?v=20261108101241';
 
 // ---------------------------------------------------------------- utils
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -159,7 +159,7 @@ const Sfx = (() => {
     // US police siren wail
     sirenNode = loopGain();
     const so = ctx.createOscillator(); so.type = 'triangle'; so.frequency.value = 950; const sl = ctx.createOscillator(); sl.frequency.value = 0.22; const sg = ctx.createGain(); sg.gain.value = 380; sl.connect(sg); sg.connect(so.frequency);
-    const sf = ctx.createBiquadFilter(); sf.type = 'lowpass'; sf.frequency.value = 2200; so.connect(sf); sf.connect(sirenNode); const ss = ctx.createGain(); ss.gain.value = 0.6; sf.connect(ss); ss.connect(wet); so.start(); sl.start();
+    const sf = ctx.createBiquadFilter(); sf.type = 'lowpass'; sf.frequency.value = 2200; so.connect(sf); sf.connect(sirenNode); const ss = ctx.createGain(); ss.gain.value = 0.35; sirenNode.connect(ss); ss.connect(wet); // reverb send now follows the distance-based volume so.start(); sl.start();
     // helicopter rotor chop
     heliNode = loopGain();
     // blade slap: noise gated by a sharp periodic pulse (whup-whup-whup)
@@ -219,7 +219,7 @@ const Sfx = (() => {
     alert() { if (!ok('alert', 0.5)) return; noise({ dur: 0.12, type: 'bandpass', freq: 1800, q: 1.5, vol: 0.25 }); tone({ freq: 1250, dur: 0.09, vol: 0.18, type: 'square', delay: 0.12, lp: 3000 }); tone({ freq: 1250, dur: 0.09, vol: 0.18, type: 'square', delay: 0.26, lp: 3000 }); noise({ dur: 0.25, type: 'bandpass', freq: 1800, q: 1.5, vol: 0.18, delay: 0.38 }); },
     setLoops(siren, heli, breath = 1) {
       if (!ctx) return; const t = now();
-      sirenNode && sirenNode.gain.setTargetAtTime(muted ? 0 : siren * 0.035, t, 0.3);
+      sirenNode && sirenNode.gain.setTargetAtTime(muted ? 0 : siren * 0.016, t, 0.3);
       heliNode && heliNode.gain.setTargetAtTime(muted ? 0 : heli * 0.7, t, 0.3);
       breathNode && breathNode.gain.setTargetAtTime(muted ? 0 : breath * 0.25, t, 0.4);
     },
