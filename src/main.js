@@ -6,8 +6,8 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { buildCity as buildCityScene } from './city.js?v=20261108102344';
-import { GAME, PLAYER, WAVES, CIVILIANS, POLICE, HELI, MODELS, TRAFFIC } from './config.js?v=20261108102344';
+import { buildCity as buildCityScene } from './city.js?v=20261108103727';
+import { GAME, PLAYER, WAVES, CIVILIANS, POLICE, HELI, MODELS, TRAFFIC } from './config.js?v=20261108103727';
 
 // ---------------------------------------------------------------- utils
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -70,6 +70,7 @@ const SFX_FILES = {
   screamF: ['scream_f1', 'scream_f2', 'scream_f3', 'scream_f4', 'scream_f5'], screamM: ['scream_m1', 'scream_m2', 'scream_m3'],
   shot: ['shot_1', 'shot_2'], boom: ['boom_1', 'boom_2'], boomTail: ['boom_tail'], glass: ['glass_1', 'glass_2', 'glass_3', 'glass_4', 'glass_5'],
   siren: ['siren_loop'], heli: ['heli_loop'], rain: ['rain_loop'],
+  slam: ['slam_1', 'slam_2', 'slam_3'], slamBig: ['slam_big'], rubble: ['rubble_1', 'rubble_2', 'rubble_3'], metal: ['metal_1', 'metal_2'],
 };
 const sfxRaw = {};
 for (const list of Object.values(SFX_FILES)) for (const f of list) sfxRaw[f] = fetch(`assets/sfx/${f}.mp3`).then((r) => (r.ok ? r.arrayBuffer() : null)).catch(() => null);
@@ -241,6 +242,13 @@ const Sfx = (() => {
     },
     // ground slam: heavy thud + rubble
     slam(p = 1) { if (!ok('slam', 0.1)) return;
+      // recorded: heavy body-fall pitched way down + rock debris; big landings add a cave-in rumble; synth sub underneath for weight
+      if (play('slam', { vol: 0.7 + p * 0.25, rate: rand(0.45, 0.6), send: 0.3 })) {
+        play('rubble', { vol: 0.35 + p * 0.15, rate: rand(0.8, 1.0), delay: 0.04, send: 0.3 });
+        if (p > 1.1) play('slamBig', { vol: Math.min(1, 0.45 * p), rate: rand(0.8, 0.95), delay: 0.02, send: 0.4 });
+        tone({ freq: 70, to: 30, dur: 0.4 + p * 0.2, vol: 0.35 + p * 0.2, send: 0.2 });
+        return;
+      }
       tone({ freq: 85, to: 32, dur: 0.45 + p * 0.25, vol: 0.55 + p * 0.25, send: 0.3 });
       noise({ dur: 0.5 + p * 0.3, type: 'lowpass', freq: 700, to: 90, vol: 0.45 + p * 0.25, brown: true, send: 0.35 });
       for (let i = 0; i < 5; i++) noise({ dur: 0.04, type: 'bandpass', freq: rand(600, 2200), q: 2, vol: 0.15, delay: rand(0.08, 0.5) }); },
@@ -248,7 +256,7 @@ const Sfx = (() => {
     roar(v = 0.45) { if (!ok('roar', 1.2)) return; if (play(Math.random() < 0.5 ? 'roarBig' : 'roar', { vol: v * 1.6, rate: rand(0.75, 0.95), send: 0.45, maxDur: 2.4 })) return; roar(rand(0.9, 1.3), v); },
     scream(female, vol = 0.22, short = false) { if (!ok('scream', short ? 0.05 : 0.28)) return; if (play(female ? 'screamF' : 'screamM', { vol: vol * 1.8, rate: rand(0.92, 1.1), send: 0.35, maxDur: short ? 0.4 : 0 })) return; scream(female, vol, short); },
     hit() { if (!ok('hit', 0.09)) return; noise({ dur: 0.07, type: 'lowpass', freq: 1200, q: 3, to: 300, vol: 0.35, brown: true }); tone({ freq: 220, to: 120, dur: 0.06, vol: 0.12 }); },
-    bump() { if (!ok('bump', 0.15)) return; tone({ freq: 150, to: 85, dur: 0.14, vol: 0.3, type: 'square', lp: 900 }); noise({ dur: 0.12, type: 'bandpass', freq: 900, q: 4, vol: 0.25 }); },
+    bump() { if (!ok('bump', 0.15)) return; if (play('metal', { vol: 0.5, rate: rand(0.7, 0.9), send: 0.25 })) return; tone({ freq: 150, to: 85, dur: 0.14, vol: 0.3, type: 'square', lp: 900 }); noise({ dur: 0.12, type: 'bandpass', freq: 900, q: 4, vol: 0.25 }); },
     carAlarm() { if (!ok('alarm', 1)) return; for (let i = 0; i < 6; i++) tone({ freq: i % 2 ? 1300 : 950, dur: 0.18, vol: 0.12, type: 'square', delay: i * 0.2, lp: 2500, send: 0.4 }); },
     // police radio chirp for wave announcements
     alert() { if (!ok('alert', 0.5)) return; noise({ dur: 0.12, type: 'bandpass', freq: 1800, q: 1.5, vol: 0.25 }); tone({ freq: 1250, dur: 0.09, vol: 0.18, type: 'square', delay: 0.12, lp: 3000 }); tone({ freq: 1250, dur: 0.09, vol: 0.18, type: 'square', delay: 0.26, lp: 3000 }); noise({ dur: 0.25, type: 'bandpass', freq: 1800, q: 1.5, vol: 0.18, delay: 0.38 }); },
