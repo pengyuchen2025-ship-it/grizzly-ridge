@@ -6,8 +6,8 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { buildCity as buildCityScene } from './city.js?v=20261108095735';
-import { GAME, PLAYER, WAVES, CIVILIANS, POLICE, HELI, MODELS, TRAFFIC } from './config.js?v=20261108095735';
+import { buildCity as buildCityScene } from './city.js?v=20261108100616';
+import { GAME, PLAYER, WAVES, CIVILIANS, POLICE, HELI, MODELS, TRAFFIC } from './config.js?v=20261108100616';
 
 // ---------------------------------------------------------------- utils
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -107,6 +107,43 @@ const Sfx = (() => {
     o.connect(am); am.connect(f); f.connect(g); out(g, 0.3); o.start(t); lfo.start(t); o.stop(t + dur + 0.05); lfo.stop(t + dur + 0.05);
     noise({ dur, type: 'bandpass', freq: 300, q: 2, vol: vol * 0.4, delay, brown: true });
   }
+  const shaper = (() => { let c = null; return () => { if (c) return c; c = new Float32Array(1024); for (let i = 0; i < 1024; i++) { const x = i / 512 - 1; c[i] = Math.tanh(x * 4.5); } return c; }; })();
+  // monster roar: two detuned saws through vocal-ish formants, distorted, with pitch fall + vibrato and a sub layer
+  function roar(dur = 1.0, vol = 0.5, delay = 0) {
+    const t = now() + delay, base = rand(55, 80);
+    const mix = ctx.createGain(); mix.gain.value = 1;
+    for (const det of [1, 1.013, 0.497]) {
+      const o = ctx.createOscillator(); o.type = 'sawtooth';
+      o.frequency.setValueAtTime(base * det * 1.25, t); o.frequency.linearRampToValueAtTime(base * det * 1.5, t + dur * 0.25); o.frequency.exponentialRampToValueAtTime(base * det * 0.7, t + dur);
+      const vib = ctx.createOscillator(); vib.frequency.value = rand(5, 8); const vg = ctx.createGain(); vg.gain.value = base * 0.06; vib.connect(vg); vg.connect(o.frequency);
+      o.connect(mix); o.start(t); vib.start(t); o.stop(t + dur + 0.05); vib.stop(t + dur + 0.05);
+    }
+    const ws = ctx.createWaveShaper(); ws.curve = shaper(); ws.oversample = '2x';
+    const pre = ctx.createGain(); pre.gain.value = 0.6; mix.connect(pre); pre.connect(ws);
+    const f1 = ctx.createBiquadFilter(); f1.type = 'bandpass'; f1.frequency.setValueAtTime(420, t); f1.frequency.linearRampToValueAtTime(650, t + dur * 0.3); f1.frequency.linearRampToValueAtTime(380, t + dur); f1.Q.value = 3;
+    const f2 = ctx.createBiquadFilter(); f2.type = 'bandpass'; f2.frequency.value = 1100; f2.Q.value = 5;
+    const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.08); g.gain.setValueAtTime(vol, t + dur * 0.6); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    const g2 = ctx.createGain(); g2.gain.value = 0.45;
+    ws.connect(f1); ws.connect(f2); f1.connect(g); f2.connect(g2); g2.connect(g); out(g, 0.45);
+    noise({ dur: dur * 0.9, type: 'bandpass', freq: 900, q: 1.2, vol: vol * 0.35, delay, attack: 0.06, send: 0.3 }); // breath
+    tone({ freq: base * 0.5, to: base * 0.35, dur, vol: vol * 0.7, attack: 0.05, delay, send: 0.2 }); // chest sub
+  }
+  // human scream: glottal saw through moving formants, rising then falling pitch, wobble + breath
+  function scream(female, vol = 0.25, short = false, delay = 0) {
+    const t = now() + delay, dur = short ? rand(0.25, 0.4) : rand(0.6, 1.1);
+    const p = female ? rand(780, 1150) : rand(420, 640);
+    const o = ctx.createOscillator(); o.type = 'sawtooth';
+    o.frequency.setValueAtTime(p * 0.8, t); o.frequency.exponentialRampToValueAtTime(p * 1.15, t + dur * 0.2); o.frequency.exponentialRampToValueAtTime(p * (short ? 0.9 : 0.62), t + dur);
+    const vib = ctx.createOscillator(); vib.frequency.value = rand(6, 9); const vg = ctx.createGain(); vg.gain.value = p * 0.035; vib.connect(vg); vg.connect(o.frequency);
+    const f1 = ctx.createBiquadFilter(); f1.type = 'bandpass'; f1.frequency.value = female ? 1000 : 750; f1.Q.value = 6;
+    const f2 = ctx.createBiquadFilter(); f2.type = 'bandpass'; f2.frequency.setValueAtTime(female ? 2400 : 1700, t); f2.frequency.linearRampToValueAtTime(female ? 2900 : 2100, t + dur); f2.Q.value = 8;
+    const f3 = ctx.createBiquadFilter(); f3.type = 'bandpass'; f3.frequency.value = 3300; f3.Q.value = 10;
+    const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.04); g.gain.setValueAtTime(vol * 0.9, t + dur * 0.7); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    const g2 = ctx.createGain(); g2.gain.value = 0.7; const g3 = ctx.createGain(); g3.gain.value = 0.35;
+    o.connect(f1); o.connect(f2); o.connect(f3); f1.connect(g); f2.connect(g2); g2.connect(g); f3.connect(g3); g3.connect(g); out(g, 0.35);
+    o.start(t); vib.start(t); o.stop(t + dur + 0.05); vib.stop(t + dur + 0.05);
+    noise({ dur, type: 'bandpass', freq: female ? 3000 : 2200, q: 2, vol: vol * 0.25, delay, attack: 0.03, send: 0.3 });
+  }
   function loopGain() { const g = ctx.createGain(); g.gain.value = 0; g.connect(dry); return g; }
   function ambience() {
     // rain hiss + distant city rumble, always on
@@ -125,9 +162,15 @@ const Sfx = (() => {
     const sf = ctx.createBiquadFilter(); sf.type = 'lowpass'; sf.frequency.value = 2200; so.connect(sf); sf.connect(sirenNode); const ss = ctx.createGain(); ss.gain.value = 0.6; sf.connect(ss); ss.connect(wet); so.start(); sl.start();
     // helicopter rotor chop
     heliNode = loopGain();
-    const hn = ctx.createBufferSource(); hn.buffer = brownBuf; hn.loop = true; const hf = ctx.createBiquadFilter(); hf.type = 'lowpass'; hf.frequency.value = 420;
-    const ham = ctx.createGain(); ham.gain.value = 0.15; const hl = ctx.createOscillator(); hl.type = 'square'; hl.frequency.value = 11.5; const hlg = ctx.createGain(); hlg.gain.value = 0.85; hl.connect(hlg); hlg.connect(ham.gain);
-    hn.connect(hf); hf.connect(ham); ham.connect(heliNode); hn.start(); hl.start();
+    // blade slap: noise gated by a sharp periodic pulse (whup-whup-whup)
+    const hn = ctx.createBufferSource(); hn.buffer = noiseBuf; hn.loop = true; const hf = ctx.createBiquadFilter(); hf.type = 'lowpass'; hf.frequency.value = 650; hf.Q.value = 0.8;
+    const ham = ctx.createGain(); ham.gain.value = 0;
+    const pulse = ctx.createOscillator(); const real = new Float32Array(16), imag = new Float32Array(16); for (let k = 1; k < 16; k++) real[k] = Math.pow(0.82, k); pulse.setPeriodicWave(ctx.createPeriodicWave(real, imag));
+    pulse.frequency.value = 12; const pg = ctx.createGain(); pg.gain.value = 0.55; pulse.connect(pg); pg.connect(ham.gain);
+    hn.connect(hf); hf.connect(ham); ham.connect(heliNode);
+    const thump = ctx.createOscillator(); thump.type = 'sine'; thump.frequency.value = 48; const tg = ctx.createGain(); tg.gain.value = 0; const pg2 = ctx.createGain(); pg2.gain.value = 0.8; pulse.connect(pg2); pg2.connect(tg.gain); thump.connect(tg); tg.connect(heliNode);
+    const whine = ctx.createOscillator(); whine.type = 'sawtooth'; whine.frequency.value = 1450; const wf = ctx.createBiquadFilter(); wf.type = 'bandpass'; wf.frequency.value = 1450; wf.Q.value = 12; const wg = ctx.createGain(); wg.gain.value = 0.05; whine.connect(wf); wf.connect(wg); wg.connect(heliNode);
+    hn.start(); pulse.start(); thump.start(); whine.start();
   }
   return {
     init,
@@ -138,7 +181,7 @@ const Sfx = (() => {
       for (let i = 0; i < 4; i++) noise({ dur: 0.035, type: 'bandpass', freq: rand(1800, 3800), q: 3, vol: 0.5, delay: i * rand(0.02, 0.04), send: 0.1 });
       noise({ dur: 0.38, type: 'lowpass', freq: 1400, q: 9, to: 160, vol: 0.55, delay: 0.05, brown: true });
       tone({ freq: 190, to: 65, dur: 0.22, vol: 0.4, delay: 0.16, lp: 600 });
-      if (Math.random() < 0.6) growl(0.45, 0.28, 62, 0.12);
+      if (Math.random() < 0.45) roar(rand(0.7, 1.0), 0.32, 0.2);
     },
     squelch() { if (!ok('sq', 0.08)) return; noise({ dur: 0.3, type: 'lowpass', freq: 1100, q: 8, to: 180, vol: 0.4, brown: true }); },
     // gunshot: sharp crack + body thump + street echo (rate-limited so a squad doesn't turn into noise)
@@ -152,15 +195,23 @@ const Sfx = (() => {
       for (let i = 0; i < 9; i++) noise({ dur: 0.03, type: 'bandpass', freq: rand(1500, 5000), q: 2, vol: 0.18, delay: rand(0.15, 1.1), send: 0.3 });
       for (let i = 0; i < 6; i++) tone({ freq: rand(2500, 5200), dur: rand(0.05, 0.12), vol: 0.05, type: 'triangle', delay: rand(0.5, 1.4), send: 0.4 }); },
     // glass: shatter burst + tinkles (rate-limited while climbing)
-    glass() { if (!ok('glass', 0.24)) return;
-      noise({ dur: 0.18, type: 'highpass', freq: 3500, vol: 0.35, send: 0.4 });
-      for (let i = 0; i < 7; i++) tone({ freq: rand(2800, 6500), dur: rand(0.05, 0.18), vol: rand(0.04, 0.09), type: 'triangle', delay: rand(0.01, 0.35), send: 0.5 }); },
+    glass() { if (!ok('glass', 0.22)) return;
+      noise({ dur: 0.03, type: 'highpass', freq: 2500, vol: 0.55, send: 0.3 });                 // impact crack
+      noise({ dur: 0.35, type: 'bandpass', freq: 6000, q: 0.8, to: 3500, vol: 0.28, delay: 0.01, send: 0.45 }); // shatter wash
+      const n = randi(9, 14);
+      for (let i = 0; i < n; i++) { // falling shards: inharmonic glassy pings, getting sparser and quieter
+        const d = 0.02 + Math.pow(Math.random(), 1.6) * 0.7, f = rand(2600, 7200), v = 0.11 * (1 - d * 0.9);
+        for (const [m, a2] of [[1, 1], [2.76, 0.5], [5.4, 0.25]]) tone({ freq: f * m, dur: rand(0.04, 0.11) / m + 0.02, vol: v * a2, type: 'sine', attack: 0.001, delay: d, send: 0.55 });
+      }
+    },
     // ground slam: heavy thud + rubble
     slam(p = 1) { if (!ok('slam', 0.1)) return;
       tone({ freq: 85, to: 32, dur: 0.45 + p * 0.25, vol: 0.55 + p * 0.25, send: 0.3 });
       noise({ dur: 0.5 + p * 0.3, type: 'lowpass', freq: 700, to: 90, vol: 0.45 + p * 0.25, brown: true, send: 0.35 });
       for (let i = 0; i < 5; i++) noise({ dur: 0.04, type: 'bandpass', freq: rand(600, 2200), q: 2, vol: 0.15, delay: rand(0.08, 0.5) }); },
-    jump() { if (!ok('jump', 0.1)) return; noise({ dur: 0.3, type: 'bandpass', freq: 350, q: 1.2, to: 1400, vol: 0.25, send: 0.1 }); growl(0.3, 0.2, 85); },
+    jump() { if (!ok('jump', 0.1)) return; noise({ dur: 0.3, type: 'bandpass', freq: 350, q: 1.2, to: 1400, vol: 0.25, send: 0.1 }); },
+    roar(v = 0.45) { if (!ok('roar', 1.2)) return; roar(rand(0.9, 1.3), v); },
+    scream(female, vol = 0.22, short = false) { if (!ok('scream', short ? 0.05 : 0.28)) return; scream(female, vol, short); },
     hit() { if (!ok('hit', 0.09)) return; noise({ dur: 0.07, type: 'lowpass', freq: 1200, q: 3, to: 300, vol: 0.35, brown: true }); tone({ freq: 220, to: 120, dur: 0.06, vol: 0.12 }); },
     bump() { if (!ok('bump', 0.15)) return; tone({ freq: 150, to: 85, dur: 0.14, vol: 0.3, type: 'square', lp: 900 }); noise({ dur: 0.12, type: 'bandpass', freq: 900, q: 4, vol: 0.25 }); },
     carAlarm() { if (!ok('alarm', 1)) return; for (let i = 0; i < 6; i++) tone({ freq: i % 2 ? 1300 : 950, dur: 0.18, vol: 0.12, type: 'square', delay: i * 0.2, lp: 2500, send: 0.4 }); },
@@ -168,8 +219,8 @@ const Sfx = (() => {
     alert() { if (!ok('alert', 0.5)) return; noise({ dur: 0.12, type: 'bandpass', freq: 1800, q: 1.5, vol: 0.25 }); tone({ freq: 1250, dur: 0.09, vol: 0.18, type: 'square', delay: 0.12, lp: 3000 }); tone({ freq: 1250, dur: 0.09, vol: 0.18, type: 'square', delay: 0.26, lp: 3000 }); noise({ dur: 0.25, type: 'bandpass', freq: 1800, q: 1.5, vol: 0.18, delay: 0.38 }); },
     setLoops(siren, heli, breath = 1) {
       if (!ctx) return; const t = now();
-      sirenNode && sirenNode.gain.setTargetAtTime(muted ? 0 : siren * 0.07, t, 0.4);
-      heliNode && heliNode.gain.setTargetAtTime(muted ? 0 : heli * 0.55, t, 0.4);
+      sirenNode && sirenNode.gain.setTargetAtTime(muted ? 0 : siren * 0.035, t, 0.3);
+      heliNode && heliNode.gain.setTargetAtTime(muted ? 0 : heli * 0.7, t, 0.3);
       breathNode && breathNode.gain.setTargetAtTime(muted ? 0 : breath * 0.25, t, 0.4);
     },
   };
@@ -723,7 +774,7 @@ function resetGame() {
   cityCtx.hydrants.forEach((h) => { h.burst = false; });
   effects.splice(0).forEach((e) => e.dispose());
   player.attached = []; player.limbs = [];
-  Object.assign(player, { r: PLAYER.startRadius, targetR: PLAYER.startRadius, hp: PLAYER.maxHp, grounded: true, climbing: false });
+  Object.assign(player, { roarT: 0, r: PLAYER.startRadius, targetR: PLAYER.startRadius, hp: PLAYER.maxHp, grounded: true, climbing: false });
   player.pos.set(SPAWN.x, PLAYER.startRadius, SPAWN.z); player.vel.set(0, 0, 0);
   buildMonsterBody(); buildTentacles();
   Object.assign(state, { roadblockWave: -1, running: true, over: false, t: 0, wave: 0, eaten: 0, carsCrushed: 0, helisDown: 0, crushReady: false, toldClimb: false, spawnT: { cop: 5, car: 0, heli: 0 }, slowmo: 1 });
@@ -819,6 +870,7 @@ function updatePlayer(dt) {
   player.gulp = Math.max(0, (player.gulp || 0) - dt);
   player.roll.scale.setScalar(r * (1 + Math.sin(player.gulp * 18) * player.gulp * 0.5));
   updateLimbs(dt);
+  if (!(player.roarT > state.t)) { if (player.roarT) Sfx.roar(0.4); player.roarT = state.t + rand(10, 16); }
   const hv = Math.hypot(player.vel.x, player.vel.z);
   if (hv > 0.05) {
     tmpV.set(player.vel.z, 0, -player.vel.x).normalize();
@@ -848,6 +900,7 @@ function updatePeople(dt, list, isCop) {
       grow(PLAYER.personVolume);
       const heal = Math.min(PLAYER.healPerPerson, PLAYER.maxHp - player.hp); player.hp += heal;
       absorbVictim(e.mesh);
+      if (!isCop) Sfx.scream(e.kind === 'woman', 0.22, true);
       setTimeout(() => { if (state.running) growLimb(isCop); }, 260);
       bloodBurst(tmpV.copy(e.pos).setY(e.pos.y + 1.1), 46, 1); bloodPool(e.pos.x, e.pos.z, e.pos.y + 0.22, rand(2, 3.2));
       player.gulp = 0.35;
@@ -881,7 +934,10 @@ function updatePeople(dt, list, isCop) {
       }
       e.mesh.rotation.y = Math.atan2(-dx, -dz);
     } else {
-      if (d < CIVILIANS.fleeRadius) { e.dir.set(dx + rand(-2, 2), 0, dz + rand(-2, 2)).normalize(); speed = CIVILIANS.runSpeed; }
+      if (d < CIVILIANS.fleeRadius) {
+        e.dir.set(dx + rand(-2, 2), 0, dz + rand(-2, 2)).normalize(); speed = CIVILIANS.runSpeed;
+        if (!(e.screamT > state.t) && Math.random() < 0.5) { e.screamT = state.t + rand(5, 10); Sfx.scream(e.kind === 'woman', clamp(0.28 - d / 90, 0.06, 0.24)); }
+      }
       else { if (e.t < 0) { e.t = rand(2, 5); e.dir.set(rand(-1, 1), 0, rand(-1, 1)).normalize(); } speed = CIVILIANS.walkSpeed; }
       e.mesh.rotation.y = Math.atan2(e.dir.x, e.dir.z);
     }
@@ -1041,7 +1097,11 @@ function updateWaves(dt) {
   state.spawnT.traffic = (state.spawnT.traffic || 0) - dt;
   if (cars.filter((c) => c.traffic && c.state === 'drive').length < TRAFFIC.count && state.spawnT.traffic <= 0) { spawnTraffic(); state.spawnT.traffic = 1.5; }
   if (W.roadblock && state.roadblockWave !== state.wave) { state.roadblockWave = state.wave; spawnRoadblock(); }
-  Sfx.setLoops(policeCars > 0 ? 1 : 0, helis.length > 0 ? 1 : 0);
+  // siren / rotor only when a police car / helicopter is actually near, louder the closer it is
+  let sirenLv = 0, heliLv = 0;
+  for (const c of cars) if (c.police && c.state !== 'wreck' && c.state !== 'flying') sirenLv = Math.max(sirenLv, clamp(1 - c.pos.distanceTo(player.pos) / 55, 0, 1) ** 1.5);
+  for (const h of helis) heliLv = Math.max(heliLv, clamp(1 - h.pos.distanceTo(player.pos) / 70, 0, 1) ** 1.3);
+  Sfx.setLoops(sirenLv, heliLv);
 }
 
 function damage(n) {
