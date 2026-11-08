@@ -105,13 +105,16 @@ for i, s in enumerate(segs):
         start = 0 if len(ov) < 3 else (s['frames'] / FPS - ov[3] if ov[2] == 'last' else ov[2])
         dur = s['frames'] / FPS - start if len(ov) < 4 else ov[3]
         jobs.append(dict(layer=ov[0], arg=ov[1], dur=dur, out=os.path.join(OV, f'{i:02d}_{ov[0]}_{ov[1] or ""}'), seg=i, start=start))
-if '--no-overlays' not in args:
+AUDIO_ONLY = '--audio-only' in args
+only_ov = args[args.index('--overlays') + 1].split(',') if '--overlays' in args else None  # e.g. --overlays end
+if '--no-overlays' not in args and not AUDIO_ONLY:
     jf = os.path.join(BUILD, 'overlay_jobs.json')
-    with open(jf, 'w') as f: json.dump(jobs, f)
+    with open(jf, 'w') as f: json.dump([j for j in jobs if not only_ov or j['layer'] in only_ov], f)
     subprocess.run(['node', os.path.join(ROOT, 'render_overlays.js'), jf], check=True)
 
 # ------------------------------------------------------------------ video segments
-SEGDIR = os.path.join(BUILD, 'segments'); shutil.rmtree(SEGDIR, ignore_errors=True); os.makedirs(SEGDIR)
+SEGDIR = os.path.join(BUILD, 'segments')
+video = os.path.join(BUILD, 'video_only.mp4')
 def repair_shot(name):
     # the software renderer occasionally hands back a half-drawn frame (big pure-black area): replace it with a blend of its neighbours
     import glob
@@ -124,36 +127,38 @@ def repair_shot(name):
         im = Image.open(fs[a if b is None else b]) if a is None or b is None else Image.blend(Image.open(fs[a]), Image.open(fs[b]), 0.5)
         im.save(fs[i], quality=93)
     if bad: print(f'  repaired {len(bad)} glitched frames in {name}: {sorted(j + 1 for j in bad)}')
-for s in segs:
+def build_video():
+  shutil.rmtree(SEGDIR, ignore_errors=True); os.makedirs(SEGDIR)
+  for s in segs:
     if s['kind'] == 'shot': repair_shot(s['name'])
-seg_files = []
-for i, s in enumerate(segs):
-    out = os.path.join(SEGDIR, f'{i:02d}.mp4'); seg_files.append(out)
-    n = s['frames']
-    inputs, filt = [], ''
-    if s['kind'] == 'shot':
-        stage = os.path.join(SEGDIR, f'{i:02d}_src'); os.makedirs(stage)
-        src = os.path.join(SHOTS, s['name']); total = s['meta']['frames']
-        first_f = int(round(s['in'] * FPS)) + 1
-        for k in range(n):
-            fidx = min(total, first_f + k); p = os.path.join(src, f'{fidx:04d}.jpg')
-            os.symlink(p, os.path.join(stage, f'{k + 1:04d}.jpg'))
-        inputs += ['-framerate', str(FPS), '-i', os.path.join(stage, '%04d.jpg')]
-    else:
-        inputs += ['-f', 'lavfi', '-i', f'color=c=black:s=1920x1080:r={FPS}']
-    chain = '[0:v]format=rgba[b0]'; last = 'b0'
-    for j, job in enumerate([j for j in jobs if j['seg'] == i]):
-        inputs += ['-framerate', str(FPS), '-itsoffset', f"{job['start']:.4f}", '-i', os.path.join(job['out'], '%04d.png')]
-        chain += f';[{last}][{j + 1}:v]overlay=eof_action=pass[b{j + 1}]'; last = f'b{j + 1}'
-    if s['o'].get('fadein'): chain += f';[{last}]fade=t=in:st=0:d={s["o"]["fadein"]}[fi]'; last = 'fi'
-    if s['o'].get('fadeout'): chain += f';[{last}]fade=t=out:st={n / FPS - s["o"]["fadeout"]:.3f}:d={s["o"]["fadeout"]}[fo]'; last = 'fo'
-    chain += f';[{last}]format=yuv420p[out]'
-    subprocess.run(['ffmpeg', '-v', 'error', '-y', *inputs, '-filter_complex', chain, '-map', '[out]', '-frames:v', str(n), '-r', str(FPS),
-                    '-c:v', 'libx264', '-preset', 'medium', '-crf', '16', '-pix_fmt', 'yuv420p', out], check=True)
-    print('segment', i, s['name'], n, 'frames')
-with open(os.path.join(SEGDIR, 'list.txt'), 'w') as f: f.writelines(f"file '{p}'\n" for p in seg_files)
-video = os.path.join(BUILD, 'video_only.mp4')
-subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'concat', '-safe', '0', '-i', os.path.join(SEGDIR, 'list.txt'), '-c', 'copy', video], check=True)
+  seg_files = []
+  for i, s in enumerate(segs):
+      out = os.path.join(SEGDIR, f'{i:02d}.mp4'); seg_files.append(out)
+      n = s['frames']
+      inputs, filt = [], ''
+      if s['kind'] == 'shot':
+          stage = os.path.join(SEGDIR, f'{i:02d}_src'); os.makedirs(stage)
+          src = os.path.join(SHOTS, s['name']); total = s['meta']['frames']
+          first_f = int(round(s['in'] * FPS)) + 1
+          for k in range(n):
+              fidx = min(total, first_f + k); p = os.path.join(src, f'{fidx:04d}.jpg')
+              os.symlink(p, os.path.join(stage, f'{k + 1:04d}.jpg'))
+          inputs += ['-framerate', str(FPS), '-i', os.path.join(stage, '%04d.jpg')]
+      else:
+          inputs += ['-f', 'lavfi', '-i', f'color=c=black:s=1920x1080:r={FPS}']
+      chain = '[0:v]format=rgba[b0]'; last = 'b0'
+      for j, job in enumerate([j for j in jobs if j['seg'] == i]):
+          inputs += ['-framerate', str(FPS), '-itsoffset', f"{job['start']:.4f}", '-i', os.path.join(job['out'], '%04d.png')]
+          chain += f';[{last}][{j + 1}:v]overlay=eof_action=pass[b{j + 1}]'; last = f'b{j + 1}'
+      if s['o'].get('fadein'): chain += f';[{last}]fade=t=in:st=0:d={s["o"]["fadein"]}[fi]'; last = 'fi'
+      if s['o'].get('fadeout'): chain += f';[{last}]fade=t=out:st={n / FPS - s["o"]["fadeout"]:.3f}:d={s["o"]["fadeout"]}[fo]'; last = 'fo'
+      chain += f';[{last}]format=yuv420p[out]'
+      subprocess.run(['ffmpeg', '-v', 'error', '-y', *inputs, '-filter_complex', chain, '-map', '[out]', '-frames:v', str(n), '-r', str(FPS),
+                      '-c:v', 'libx264', '-preset', 'medium', '-crf', '16', '-pix_fmt', 'yuv420p', out], check=True)
+      print('segment', i, s['name'], n, 'frames')
+  with open(os.path.join(SEGDIR, 'list.txt'), 'w') as f: f.writelines(f"file '{p}'\n" for p in seg_files)
+  subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'concat', '-safe', '0', '-i', os.path.join(SEGDIR, 'list.txt'), '-c', 'copy', video], check=True)
+if not AUDIO_ONLY: build_video()
 
 # ------------------------------------------------------------------ audio
 def decode(path, start=0.0, dur=None, ch=2):
@@ -163,6 +168,7 @@ def decode(path, start=0.0, dur=None, ch=2):
 N = int(DUR * SR) + 1
 mix_bgm = np.zeros((N, 2), np.float32); mix_sfx = np.zeros((N, 2), np.float32)
 bgm = decode(BGM, BGM_OFFSET, DUR)[:N]; mix_bgm[:len(bgm)] = bgm
+bgm_pk = np.abs(mix_bgm).max() or 1; mix_bgm /= bgm_pk
 fo = int(2.6 * SR); mix_bgm[N - fo:] *= np.linspace(1, 0, fo)[:, None] ** 1.5
 
 SFXDIR = os.path.join(REPO, 'assets/sfx'); _cache = {}
@@ -174,9 +180,11 @@ GROUPS = {'eat': ['eat_1', 'eat_2', 'eat_3', 'eat_4'], 'crunch': ['crunch_1', 'c
           'siren': ['siren_loop'], 'heli': ['heli_loop'], 'rain': ['rain_loop']}
 rng = random.Random(3)
 def sample(f):
-    if f not in _cache: _cache[f] = decode(os.path.join(SFXDIR, f + '.mp3'))
+    if f not in _cache:
+        a = decode(os.path.join(SFXDIR, f + '.mp3')); pk = np.abs(a).max()
+        _cache[f] = a / pk * 0.9 if pk > 0 else a  # every recording peak-normalised, so volumes below mean the same thing
     return _cache[f]
-def place(group, t, vol=0.5, rate=1.0, max_dur=0.0, end=None):
+def place(group, t, vol=0.5, rate=1.0, max_dur=0.0, end=None, pan=None):
     a = sample(rng.choice(GROUPS[group]))
     if rate != 1.0:
         idx = np.arange(0, len(a) - 1, rate); a = np.stack([np.interp(idx, np.arange(len(a)), a[:, c]) for c in range(2)], 1)
@@ -184,30 +192,40 @@ def place(group, t, vol=0.5, rate=1.0, max_dur=0.0, end=None):
     i0 = int(t * SR); i1 = min(N, i0 + len(a)) if end is None else min(N, int(end * SR), i0 + len(a))
     if i0 >= N or i1 <= i0: return
     seg = a[:i1 - i0] * vol
+    p = rng.uniform(-0.35, 0.35) if pan is None else pan
+    seg = seg * np.array([min(1, 1 - p), min(1, 1 + p)], np.float32)
     if end is not None and i1 - i0 > 400: seg[-400:] *= np.linspace(1, 0, 400)[:, None]  # no hard cut at a scene change
     mix_sfx[i0:i1] += seg
+def thump(t, vol=0.8, f0=70, f1=28, dur=1.0):  # synth sub-bass under explosions and landings, for weight
+    n = int(dur * SR); tt = np.arange(n) / SR; f = f0 * (f1 / f0) ** (tt / dur); ph = 2 * np.pi * np.cumsum(f) / SR
+    w = np.sin(ph) * np.exp(-tt * 4.5 / dur) * vol; w[:80] *= np.linspace(0, 1, 80)
+    i0 = int(t * SR); i1 = min(N, i0 + n)
+    if i0 < N: mix_sfx[i0:i1] += w[:i1 - i0, None].astype(np.float32)
 U = rng.uniform
-GAP = {'eat': 0.06, 'scream': 0.28, 'boom': 0.12, 'slam': 0.1, 'glass': 0.22, 'shot': 0.07, 'roar': 1.2, 'jump': 0.1, 'bump': 0.15, 'squelch': 0.08}
-def play_event(e, t, end):
+GAP = {'eat': 0.06, 'scream': 0.35, 'boom': 0.12, 'slam': 0.1, 'glass': 0.2, 'shot': 0.09, 'roar': 1.2, 'jump': 0.1, 'bump': 0.15, 'squelch': 0.08}
+def play_event(e, t, end, g=1.0):
     n, a = e['n'], e.get('a') or []
     kw = dict(end=end)
     if n == 'eat':
-        place('crunch', t, 0.75, U(0.85, 1.1), **kw); place('squish', t + 0.04, 0.7, U(0.8, 1.05), **kw); place('eat', t + 0.12, 0.6, U(0.7, 0.9), **kw)
-        if rng.random() < 0.5: place('roar', t + 0.25, 0.55, U(0.6, 0.8), 1.6, **kw)
-    elif n == 'squelch': place('squish', t, 0.5, U(0.8, 1.1), **kw)
+        place('crunch', t, 0.95 * g, U(0.85, 1.05), **kw); place('squish', t + 0.04, 0.85 * g, U(0.8, 1.0), **kw); place('eat', t + 0.12, 0.8 * g, U(0.7, 0.85), **kw)
+        place('roar', t + 0.22, 0.6 * g, U(0.65, 0.8), 1.6, **kw)
+    elif n == 'squelch': place('squish', t, 0.6 * g, U(0.8, 1.0), **kw)
     elif n == 'scream':
         female, vol, short = (a + [False, 0.22, False])[:3]
-        place('screamF' if female else 'screamM', t, min(0.6, (vol or 0.22) * 1.8), U(0.92, 1.1), 0.4 if short else 0, **kw)
-    elif n == 'boom': place('boom', t, 1.0, U(0.55, 0.7), **kw); place('boomTail', t, 0.9, U(0.85, 1.0), **kw)
+        place('screamF' if female else 'screamM', t, max(0.38, min(0.75, (vol or 0.22) * 3)) * g, U(0.95, 1.08), 0.5 if short else 1.6, **kw)
+    elif n == 'boom':
+        place('boom', t, 1.0 * g, U(0.6, 0.72), **kw); place('boomTail', t + 0.02, 0.85 * g, U(0.85, 1.0), **kw); thump(t, 0.75 * g)
     elif n == 'slam':
         p = a[0] if a else 1
-        place('slam', t, 0.7 + p * 0.25, U(0.45, 0.6), **kw); place('rubble', t + 0.04, 0.35 + p * 0.15, U(0.8, 1.0), **kw)
-        if p > 1.1: place('slamBig', t + 0.02, min(1, 0.45 * p), U(0.8, 0.95), **kw)
-    elif n == 'glass': place('glass', t, 0.5, U(0.9, 1.15), **kw)
-    elif n == 'shot': place('shot', t, min(0.7, max(0.08, (a[0] if a else 0.3) * 2.2)) * 0.9, U(0.92, 1.08), **kw)
-    elif n == 'jump': place('grunt', t, 0.45, U(0.6, 0.75), **kw)
-    elif n == 'roar': place('roarBig' if rng.random() < 0.5 else 'roar', t, min(1.0, (a[0] if a else 0.45) * 1.6), U(0.75, 0.95), 2.4, **kw)
-    elif n == 'bump': place('metal', t, 0.4, U(0.7, 0.9), **kw)
+        if p < 0.35:  # take-off from the ground / roof
+            place('slam', t, 0.45 * g, U(0.6, 0.7), **kw); return
+        place('slam', t, 0.95 * g, U(0.45, 0.55), **kw); place('rubble', t + 0.04, 0.6 * g, U(0.8, 1.0), **kw)
+        place('slamBig', t + 0.02, min(1, 0.55 * p + 0.3) * g, U(0.8, 0.95), **kw); thump(t, 0.7 * g, 60, 25, 1.2)
+    elif n == 'glass': place('glass', t, 1.0 * g, U(0.9, 1.15), **kw); place('rubble', t, 0.35 * g, U(1.0, 1.2), **kw)
+    elif n == 'shot': place('shot', t, max(0.3, min(0.6, (a[0] if a else 0.3) * 2.0)) * g, U(0.92, 1.08), **kw)
+    elif n == 'jump': place('grunt', t, 0.6 * g, U(0.6, 0.72), **kw)
+    elif n == 'roar': place('roarBig' if rng.random() < 0.5 else 'roar', t, 0.8 * g, U(0.75, 0.95), 2.4, **kw)
+    elif n == 'bump': place('metal', t, 0.5 * g, U(0.7, 0.9), **kw)
 def loop_bed(group, t0, n_frames, levels, gain):
     a = sample(GROUPS[group][0]); need = int(n_frames / FPS * SR); start = rng.randrange(len(a))
     seg = np.concatenate([a] * (need // len(a) + 3))[start:start + need]
@@ -215,26 +233,62 @@ def loop_bed(group, t0, n_frames, levels, gain):
     k = min(need, 600); env[:k] *= np.linspace(0, 1, k); env[-k:] *= np.linspace(1, 0, k)
     i0 = int(t0 * SR); i1 = min(N, i0 + need); mix_sfx[i0:i1] += seg[:i1 - i0] * env[:i1 - i0, None]
 
+# per-shot loudness of the game's own events (the establishing shot stays distant) + hand-placed accents (seconds from segment start)
+SEG_GAIN = {'aerial': 0.45}
+def ev_time(s, name, k=0, pred=lambda e: True):
+    ts = [e['t'] for e in s['meta']['events'] if e['n'] == name and pred(e)]
+    return ts[k] - s['in'] if len(ts) > k else None
+def accents(s):
+    n, d, A = s['name'], s['frames'] / FPS, []
+    if n == 'ambush':  # the running woman screams, then gets eaten
+        te = ev_time(s, 'eat')
+        if te: A += [('screamM', te - 3.2, 0.7, 1.0, 1.2), ('screamF', te - 2.3, 1.0, 1.0, 1.6), ('screamM', te - 1.5, 0.6, 1.05, 1.0), ('screamF', te - 0.7, 1.1, 1.05, 0.7), ('roarBig', te + 0.25, 0.85, 0.85, 1.6)]
+    if n == 'card1': A += [('roarBig', 0.25, 0.95, 0.8, 2.0)]
+    if n == 'frenzy': A += [('screamM', 0.1, 0.6, 1.0, 1.0), ('screamF', 0.9, 0.6, 1.05, 1.0), ('roar', 1.6, 0.7, 0.7, 1.4)]
+    if n == 'limbs': A += [('squish', 0.15, 0.7, 0.8, 0), ('grunt', 0.55, 0.7, 0.55, 0), ('squish', 1.0, 0.7, 0.7, 0), ('roar', 1.25, 0.75, 0.6, 1.0)]
+    if n == 'climb': A += [('grunt', 0.1, 0.8, 0.6, 0), ('screamF', 1.2, 0.7, 1.05, 1.0), ('roar', 2.0, 0.6, 0.7, 1.0)]
+    if n == 'police': A += [('shot', 0.35, 0.5, 1.0, 0), ('shot', 0.5, 0.45, 1.05, 0)]
+    if n == 'card2': A += [('shot', 0.05, 0.55, 1.0, 0), ('shot', 0.18, 0.5, 0.95, 0), ('shot', 0.3, 0.5, 1.05, 0)]
+    if n == 'heli':
+        tb = ev_time(s, 'boom')
+        if tb: A += [('roarBig', tb - 0.45, 0.7, 0.9, 1.0)]
+    if n == 'card3': A += [('roarBig', 0.15, 0.9, 0.7, 1.3)]
+    if n == 'climax': A += [('roarBig', 0.2, 1.0, 0.75, 2.6), ('screamM', 1.4, 0.5, 1.0, 1.2), ('screamF', 2.6, 0.5, 1.05, 1.2)]
+    if n == 'end': A += [('boom', 0.0, 0.9, 0.6, 0), ('boomTail', 0.05, 0.8, 0.8, 0)]
+    return A
+
 for s in segs:
     t0, dur = s['t0'], s['frames'] / FPS
-    if s['kind'] == 'card':
-        if s['o'].get('hit'): place('slamBig', t0, 0.8, 0.8, end=t0 + dur); place('boomTail', t0, 0.5, 0.7, end=t0 + dur)
-        continue
-    meta, tin = s['meta'], s['in']
-    last = {}
-    for e in meta['events']:
-        if not (tin - 0.05 <= e['t'] < tin + dur): continue
-        if e['t'] - last.get(e['n'], -9) < GAP.get(e['n'], 0): continue
-        last[e['n']] = e['t']
-        play_event(e, t0 + max(0, e['t'] - tin), t0 + dur + 0.25)
-    f0 = int(round(tin * FPS)); lv = np.array(meta['loops'][f0:f0 + s['frames']] or [[0, 0]], np.float32)
-    if len(lv) < s['frames']: lv = np.concatenate([lv, np.repeat(lv[-1:], s['frames'] - len(lv), 0)])
-    if lv[:, 0].max() > 0.01: loop_bed('siren', t0, s['frames'], lv[:, 0], 0.5)
-    if lv[:, 1].max() > 0.01: loop_bed('heli', t0, s['frames'], lv[:, 1], 0.45)
-    loop_bed('rain', t0, s['frames'], np.full(s['frames'], 1.0), 0.12)
+    end = t0 + dur + (0.6 if s['kind'] == 'card' else 0.25)
+    if s['kind'] == 'card' and s['o'].get('hit'):
+        place('slamBig', t0, 0.85, 0.8, end=end); thump(t0, 0.6, 55, 25, 1.0)
+    if s['kind'] == 'shot':
+        meta, tin, g = s['meta'], s['in'], SEG_GAIN.get(s['name'], 1.0)
+        last = {}
+        for e in meta['events']:
+            if not (tin - 0.05 <= e['t'] < tin + dur): continue
+            if e['t'] - last.get(e['n'], -9) < GAP.get(e['n'], 0): continue
+            last[e['n']] = e['t']
+            play_event(e, t0 + max(0, e['t'] - tin), end, g)
+        f0 = int(round(tin * FPS)); lv = np.array(meta['loops'][f0:f0 + s['frames']] or [[0, 0]], np.float32)
+        if len(lv) < s['frames']: lv = np.concatenate([lv, np.repeat(lv[-1:], s['frames'] - len(lv), 0)])
+        if lv[:, 0].max() > 0.01: loop_bed('siren', t0, s['frames'], np.maximum(lv[:, 0], 0.5), 0.55)
+        if lv[:, 1].max() > 0.01: loop_bed('heli', t0, s['frames'], np.maximum(lv[:, 1], 0.4), 0.6)
+        loop_bed('rain', t0, s['frames'], np.full(s['frames'], 1.0), 0.1)
+    for grp, at, vol, rate, md in accents(s):
+        if at is not None and at > -0.05: place(grp, t0 + max(0, at), vol, rate, md, end=end)
 
-mix = mix_bgm * 0.85 + mix_sfx * 0.42
-mix = np.tanh(mix * 1.1) / np.tanh(1.1)  # soft limiter
+# BGM ducks under the sound effects (fast attack, slow release), so screams and explosions cut through
+env = np.abs(mix_sfx).max(1)
+blk = 441; nb = len(env) // blk + 1
+lvl = np.array([env[i * blk:(i + 1) * blk].max() if i * blk < len(env) else 0 for i in range(nb)])
+sm = np.zeros(nb); a_att, a_rel = 0.6, 0.06
+for i in range(nb): prev = sm[i - 1] if i else 0; sm[i] = prev + (lvl[i] - prev) * (a_att if lvl[i] > prev else a_rel)
+duck = 1 - 0.55 * np.clip(sm / 0.8, 0, 1)
+duck = np.interp(np.arange(N), np.arange(nb) * blk, duck).astype(np.float32)
+mix = mix_bgm * 0.62 * duck[:, None] + mix_sfx * 0.9
+mix = np.tanh(mix * 1.15) / np.tanh(1.15)  # soft limiter
+np.save(os.path.join(BUILD, 'stems.npy'), np.stack([(mix_bgm * 0.62 * duck[:, None]).mean(1), (mix_sfx * 0.9).mean(1)])[:, ::10])  # for level checks
 wav = os.path.join(BUILD, 'audio.wav')
 subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'f32le', '-ar', str(SR), '-ac', '2', '-i', '-', wav], input=mix.astype(np.float32).tobytes(), check=True)
 final = os.path.join(BUILD, 'grizzly_ridge_trailer.mp4')
