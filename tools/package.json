@@ -1,0 +1,6 @@
+{
+  "name": "grizzly-ridge-tools",
+  "private": true,
+  "description": "Model compression tools for Hi3D GLB files",
+  "dependencies": { "@gltf-transform/cli": "4.1.1" }
+}
