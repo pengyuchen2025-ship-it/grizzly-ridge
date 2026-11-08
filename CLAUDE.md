@@ -31,6 +31,7 @@
   - `updateCamera`：俯视跟随 + 挡住怪兽的楼自动变透明 + 雨
   - 调试：`window.__game` 暴露 state/player/civilians/cops/cars/helis/stick
 
+推送前先运行 `bash tools/bump_version.sh`（给 JS 加版本号，避免手机浏览器缓存旧代码）。
 本地运行：`python3 -m http.server 8000` 然后打开 http://localhost:8000
 
 ## 模型流程（Hi3D → 游戏）
