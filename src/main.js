@@ -551,6 +551,45 @@ function attachVictim(mesh) {
 }
 function grow(vol) { player.targetR = Math.cbrt(player.targetR ** 3 + vol); }
 
+// each eaten person leaves an arm or a leg sticking out of the mass, flailing; they roll with the body
+player.limbs = [];
+const LIMB_SKIN = [0xe8c2a4, 0xd9a888, 0xb57c5c, 0xf0d0b8].map((c) => M(c));
+const LIMB_PANTS = [0x5d6f8c, 0x7a6a55, 0x4f5a66, 0x8a8478].map((c) => M(c));
+const limbGeo = { seg: new THREE.CylinderGeometry(0.09, 0.11, 1, 6).translate(0, 0.5, 0), hand: new THREE.BoxGeometry(0.16, 0.22, 0.08).translate(0, 0.11, 0), foot: new THREE.BoxGeometry(0.16, 0.12, 0.32).translate(0, 0.06, 0.08) };
+function growLimb(isCop) {
+  const leg = Math.random() < 0.45;
+  const skin = pick(LIMB_SKIN), cloth = isCop ? MAT.police : (leg ? pick(LIMB_PANTS) : skin);
+  const root = new THREE.Group();
+  const upperLen = leg ? 0.5 : 0.36, lowerLen = leg ? 0.48 : 0.34;
+  const upper = new THREE.Mesh(limbGeo.seg, cloth); upper.scale.set(leg ? 1.3 : 1, upperLen, leg ? 1.3 : 1);
+  const joint = new THREE.Group(); joint.position.y = upperLen;
+  const lower = new THREE.Mesh(limbGeo.seg, leg ? cloth : skin); lower.scale.set(leg ? 1.1 : 0.85, lowerLen, leg ? 1.1 : 0.85);
+  const tip = new THREE.Mesh(leg ? limbGeo.foot : limbGeo.hand, leg ? (Math.random() < 0.5 ? skin : MAT.tire) : skin); tip.position.y = lowerLen;
+  joint.add(lower, tip); root.add(upper, joint);
+  root.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+  // place on the surface, pointing outward (local space of the rolling body, radius ~0.72)
+  const dir = new V3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).normalize();
+  root.position.copy(dir).multiplyScalar(0.74);
+  root.quaternion.setFromUnitVectors(new V3(0, 1, 0), dir);
+  player.roll.add(root);
+  const L = { root, joint, phase: rand(0, 6.28), speed: rand(5, 11), born: state.t, base: root.quaternion.clone() };
+  player.limbs.push(L);
+  if (player.limbs.length > 45) { const old = player.limbs.shift(); player.roll.remove(old.root); }
+}
+const limbQ = new THREE.Quaternion(), limbE = new THREE.Euler();
+function updateLimbs() {
+  const r = player.r, t = state.t;
+  // keep limbs at human size in the world (slightly larger as the monster grows so they stay readable)
+  const world = 1.9 + 0.25 * Math.max(0, r - PLAYER.startRadius);
+  for (const L of player.limbs) {
+    const grow = Math.min(1, (t - L.born) / 0.45);
+    L.root.scale.setScalar((world / r) * grow);
+    limbE.set(Math.sin(t * L.speed + L.phase) * 0.55, 0, Math.cos(t * L.speed * 0.8 + L.phase) * 0.55);
+    L.root.quaternion.copy(L.base).multiply(limbQ.setFromEuler(limbE));
+    L.joint.rotation.x = 0.4 + Math.sin(t * L.speed * 1.3 + L.phase) * 0.7;
+  }
+}
+
 // ---------------------------------------------------------------- entities
 let civilians = [], cops = [], cars = [], helis = [];
 function spawnPerson(kind, near) {
@@ -639,7 +678,7 @@ function resetGame() {
   buildings.forEach((b) => { b.survivors = 0; });
   cityCtx.hydrants.forEach((h) => { h.burst = false; });
   effects.splice(0).forEach((e) => e.dispose());
-  player.attached = [];
+  player.attached = []; player.limbs = [];
   Object.assign(player, { r: PLAYER.startRadius, targetR: PLAYER.startRadius, hp: PLAYER.maxHp, grounded: true, climbing: false });
   player.pos.set(SPAWN.x, PLAYER.startRadius, SPAWN.z); player.vel.set(0, 0, 0);
   buildMonsterBody(); buildTentacles();
@@ -735,6 +774,7 @@ function updatePlayer(dt) {
   player.root.position.copy(player.pos);
   player.gulp = Math.max(0, (player.gulp || 0) - dt);
   player.roll.scale.setScalar(r * (1 + Math.sin(player.gulp * 18) * player.gulp * 0.5));
+  updateLimbs();
   const hv = Math.hypot(player.vel.x, player.vel.z);
   if (hv > 0.05) {
     tmpV.set(player.vel.z, 0, -player.vel.x).normalize();
@@ -764,6 +804,7 @@ function updatePeople(dt, list, isCop) {
       grow(PLAYER.personVolume);
       const heal = Math.min(PLAYER.healPerPerson, PLAYER.maxHp - player.hp); player.hp += heal;
       absorbVictim(e.mesh);
+      setTimeout(() => { if (state.running) growLimb(isCop); }, 260);
       bloodBurst(tmpV.copy(e.pos).setY(e.pos.y + 1.1), 46, 1); bloodPool(e.pos.x, e.pos.z, e.pos.y + 0.22, rand(2, 3.2));
       player.gulp = 0.35;
       Sfx.eat(); Sfx.squelch();
