@@ -63,6 +63,12 @@
     background:linear-gradient(180deg,#ef3a44,#a3101a); color:#fff; border:2px solid #ff8a8f; cursor:pointer; box-shadow:0 0 0 4px rgba(0,0,0,.6), 0 0 40px rgba(224,48,58,.65); animation: pulse 1.6s ease-in-out infinite; }
   .btn-start:hover { filter:brightness(1.12); } .btn-start:active { transform:translateY(2px); }
   @keyframes pulse { 50% { box-shadow:0 0 0 4px rgba(0,0,0,.6), 0 0 70px rgba(255,60,70,.9); } }
+  .loadbar { position:relative; z-index:2; width:min(360px, 80vw); height:6px; margin-top:22px; background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.18); overflow:hidden; }
+  .loadbar i { position:absolute; left:0; top:0; bottom:0; width:3%; background:linear-gradient(90deg,#7a0a12,#ef3a44 70%,#ffb0b5); box-shadow:0 0 12px rgba(239,58,68,.8); transition:width .35s ease-out; }
+  .loadbar i::after { content:""; position:absolute; inset:0; background:linear-gradient(90deg,transparent,rgba(255,255,255,.55),transparent); animation: shimmer 1.1s linear infinite; }
+  @keyframes shimmer { from { transform:translateX(-100%); } to { transform:translateX(100%); } }
+  .loadbar.done { opacity:0; transition:opacity .6s .4s; }
+  .btn-start:disabled { opacity:.35; filter:grayscale(.7); animation:none; cursor:wait; box-shadow:0 0 0 4px rgba(0,0,0,.6); }
   .foot { margin-top:18px; font-size:12px; letter-spacing:1px; opacity:.6; position:relative; z-index:2; }
   .ticker { position:absolute; left:0; right:0; bottom:0; height:38px; display:flex; align-items:center; background:rgba(8,8,10,.92); border-top:2px solid #e0303a; overflow:hidden; z-index:2; }
   .ticker .lbl { flex:none; height:100%; display:flex; align-items:center; padding:0 14px; background:#e0303a; color:#fff; font-weight:900; letter-spacing:2px; font-size:13px; z-index:1; }
@@ -133,8 +139,9 @@
     <div class="card"><svg viewBox="0 0 24 24" fill="none" stroke="#ff5a63" stroke-width="2"><rect x="13" y="2" width="8" height="20"/><path d="M15 6h4M15 10h4M15 14h4"/><circle cx="8" cy="15" r="3"/><path d="M8 11V5M5 8l3-3 3 3"/></svg><b>爬墙上楼</b><span>贴着墙继续推</span></div>
     <div class="card"><svg viewBox="0 0 24 24" fill="none" stroke="#ff5a63" stroke-width="2"><path d="M3 17h18l-2-5H5z"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/><path d="M8 9l2-4M12 8V3M16 9l-2-4"/></svg><b>压爆车辆</b><span>吃够人变大之后</span></div>
   </div>
-  <button class="btn-start" id="start-btn">开始吞噬</button>
-  <div class="foot" id="loading">加载中…</div>
+  <button class="btn-start" id="start-btn" disabled>开始吞噬</button>
+  <div class="loadbar" id="loadbar"><i id="loadfill"></i></div>
+  <div class="foot" id="loading">正在接入灰岭市监控画面… 0%</div>
   <div class="ticker"><div class="lbl">快讯</div><div class="run">灰岭市发生不明生物袭击，目击者称其“由许多人体融合而成”<i>■</i>市政府呼吁市民立即撤离，切勿靠近市中心<i>■</i>警方已封锁主要路口，直升机正在空中搜索<i>■</i>本台记者正在现场直播<i>■</i>请勿尝试与该生物接触</div></div>
 </div>
 
@@ -163,6 +170,6 @@
   "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
 } }
 </script>
-<script type="module" src="src/main.js?v=20261108100616"></script>
+<script type="module" src="src/main.js?v=20261108101141"></script>
 </body>
 </html>

@@ -6,8 +6,8 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { buildCity as buildCityScene } from './city.js?v=20261108100616';
-import { GAME, PLAYER, WAVES, CIVILIANS, POLICE, HELI, MODELS, TRAFFIC } from './config.js?v=20261108100616';
+import { buildCity as buildCityScene } from './city.js?v=20261108101141';
+import { GAME, PLAYER, WAVES, CIVILIANS, POLICE, HELI, MODELS, TRAFFIC } from './config.js?v=20261108101141';
 
 // ---------------------------------------------------------------- utils
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -228,6 +228,13 @@ const Sfx = (() => {
 
 // ---------------------------------------------------------------- models (Hi3D GLB, optional)
 const templates = {};
+// ---------------------------------------------------------------- loading progress (start screen)
+let loadPct = 0;
+function setProgress(p, label) {
+  loadPct = Math.max(loadPct, Math.min(100, p));
+  const f = document.getElementById('loadfill'); if (f) f.style.width = loadPct + '%';
+  const l = document.getElementById('loading'); if (l && label) l.textContent = `${label} ${Math.round(loadPct)}%`;
+}
 async function loadModels() {
   let ids = [];
   try { const r = await fetch('assets/models/manifest.json', { cache: 'no-store' }); if (r.ok) ids = await r.json(); } catch (e) {}
@@ -240,9 +247,12 @@ async function loadModels() {
     const r = await fetch(`assets/models/${id}.glb`); if (!r.ok) throw new Error(r.status); return r.arrayBuffer();
   };
   if (embedded) ids = [...new Set([...ids, ...Object.keys(embedded)])];
-  await Promise.allSettled(ids.filter((id) => MODELS[id]).map(async (id) => {
+  const todo = ids.filter((id) => MODELS[id]); let done = 0;
+  setProgress(8, `正在载入 Hi3D 模型 0/${todo.length}…`);
+  await Promise.allSettled(todo.map(async (id) => {
     try { const buf = await getBuffer(id); const g = await loader.parseAsync(buf, ''); templates[id] = normalizeModel(g.scene, MODELS[id]); }
     catch (err) { console.warn('model failed', id, err); }
+    finally { done++; setProgress(8 + 52 * done / Math.max(1, todo.length), `正在载入 Hi3D 模型 ${done}/${todo.length}…`); }
   }));
 }
 function normalizeModel(root, cfg) {
@@ -1237,15 +1247,26 @@ function frame() {
 
 // ---------------------------------------------------------------- boot
 (async function boot() {
+  setProgress(4, '正在接入灰岭市监控画面…');
   await loadModels();
+  setProgress(62, '正在生成灰岭市…');
+  await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 30))); // let the bar paint before the heavy city build
   buildCity();
+  setProgress(80, '正在载入配乐…');
   player.pos.set(SPAWN.x, PLAYER.startRadius, SPAWN.z); buildMonsterBody(); buildTentacles();
   camera.position.set(SPAWN.x, 20, SPAWN.z + 22);
   let ver = ''; try { const v = new URL(import.meta.url).searchParams.get('v'); if (v && v.length >= 12) ver = ` · 版本 ${v.slice(8, 10)}:${v.slice(10, 12)}`; } catch (e) {}
   // version stamp is UTC (from the build script); show Beijing time
   try { const v = new URL(import.meta.url).searchParams.get('v'); if (v && v.length >= 12) { const hh = (parseInt(v.slice(8, 10), 10) + 8) % 24; ver = ` · 版本 ${String(hh).padStart(2, '0')}:${v.slice(10, 12)}`; } } catch (e) {}
-  $('loading').textContent = (Object.keys(templates).length ? `已载入 Hi3D 模型 ${Object.keys(templates).length} 个` : '模型由 Hi3D 生成 · 占位模型显示中') + ver;
   frame();
+  // wait for the music (max 6s: mobile browsers often refuse to preload audio before a tap)
+  await new Promise((r) => { if (bgm.readyState >= 3) return r(); const t = setTimeout(r, 6000); bgm.addEventListener('canplaythrough', () => { clearTimeout(t); r(); }, { once: true }); bgm.load(); });
+  setProgress(94, '正在编译画面…');
+  await new Promise((r) => setTimeout(r, 400)); // a few frames so shaders are compiled before the player can start
+  setProgress(100, '准备就绪');
+  $('loadbar').classList.add('done');
+  $('start-btn').disabled = false;
+  $('loading').textContent = (Object.keys(templates).length ? `已载入 Hi3D 模型 ${Object.keys(templates).length} 个` : '模型由 Hi3D 生成 · 占位模型显示中') + ver;
   const start = () => { Sfx.init(); bgm.volume = 0.42; if (bgm.paused) bgm.play().catch(() => {}); document.body.classList.remove('menu'); $('start-screen').classList.add('hidden'); $('result-screen').classList.add('hidden'); resetGame(); };
   $('start-btn').addEventListener('click', start);
   $('restart-btn').addEventListener('click', start);
