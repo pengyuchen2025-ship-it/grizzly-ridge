@@ -438,10 +438,12 @@ const holeTex = (() => { const c = document.createElement('canvas'); c.width = 3
 const shardMat = new THREE.PointsMaterial({ color: 0xd8f0ff, size: 0.3, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
 const holes = [];
 function glassBurst(px, py, pz, nx, nz, b) {
-  const y = clamp(py, b.base + 1.2, b.top - 1.2);
+  const y = b ? clamp(py, b.base + 1.2, b.top - 1.2) : py;
+  if (b) {
   const hole = new THREE.Mesh(new THREE.PlaneGeometry(1.6 * Math.min(2, player.r * 0.7), 2 * Math.min(2, player.r * 0.7)), new THREE.MeshBasicMaterial({ map: holeTex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
   hole.position.set(px + nx * 0.06, y, pz + nz * 0.06); hole.rotation.y = Math.atan2(nx, nz); scene.add(hole);
   holes.push(hole); if (holes.length > 160) scene.remove(holes.shift());
+  }
   const n = 26, geo = new THREE.BufferGeometry(), a = new Float32Array(n * 3), vel = [];
   for (let i = 0; i < n; i++) { a.set([px + nx * 0.3, y + rand(-0.6, 0.6), pz + nz * 0.3], i * 3); vel.push(new V3(nx * rand(3, 8) + rand(-2, 2), rand(0, 4), nz * rand(3, 8) + rand(-2, 2))); }
   geo.setAttribute('position', new THREE.BufferAttribute(a, 3));
@@ -679,7 +681,13 @@ function updatePlayer(dt) {
 
   player.pos.addScaledVector(player.vel, dt);
   player.pos.x = clamp(player.pos.x, -HALF - 8, HALF + 8); player.pos.z = clamp(player.pos.z, -HALF - 8, HALF + 8);
-  const g = groundAt(player.pos.x, player.pos.z, player.pos.y - r);
+  let g = groundAt(player.pos.x, player.pos.z, player.pos.y - r);
+  player.onCar = null;
+  for (const c of cars) {
+    if (c.state === 'flying') continue;
+    const top = c.pos.y + (c.state === 'wreck' ? 1.1 : 1.7);
+    if (Math.hypot(c.pos.x - player.pos.x, c.pos.z - player.pos.z) < 2.1 && top <= player.pos.y - r + 0.7 && top > g) { g = top; player.onCar = c; }
+  }
   const wasAir = !player.grounded;
   player.grounded = false;
   if (player.pos.y - r <= g) {
@@ -777,6 +785,8 @@ function updateCars(dt) {
       continue;
     }
     if (c.state === 'wreck') continue;
+    if (player.onCar === c && !c.dented) { c.dented = true; c.wobble = 0.8; Sfx.alert(); floatText(tmpV2.copy(c.pos).setY(2.6), '车辆警报！', 'dmg'); glassBurst(c.pos.x, c.pos.y + 1.3, c.pos.z, 1, 0, null); glassBurst(c.pos.x, c.pos.y + 1.3, c.pos.z, -1, 0, null); }
+    if (c.wobble > 0) { c.wobble -= dt; c.mesh.rotation.z = Math.sin(state.t * 40) * 0.06 * c.wobble; if (c.wobble <= 0) c.mesh.rotation.z = 0; }
     if (c.hop > 0) { c.hop -= dt; c.pos.y = Math.max(0, Math.sin((1 - c.hop / 0.5) * Math.PI) * 1.3); if (c.hop <= 0) c.pos.y = 0; }
     // civilian traffic
     if (c.traffic && c.state === 'drive') {
@@ -806,11 +816,13 @@ function updateCars(dt) {
     const d = Math.hypot(c.pos.x - pp.x, c.pos.z - pp.z);
     if (d < pr + 1.9 && pp.y - pr < 2.0) {
       if (pr >= PLAYER.crushRadius) crushCar(c);
-      else {
+      else if (pp.y - pr < c.pos.y + 1.4) {
+        // too small to crush: climb onto it instead
         const nx = (pp.x - c.pos.x) / (d || 1), nz = (pp.z - c.pos.z) / (d || 1);
         pp.x = c.pos.x + nx * (pr + 1.9); pp.z = c.pos.z + nz * (pr + 1.9);
-        player.vel.x = nx * 8; player.vel.z = nz * 8;
-        if (!c.bumpT || state.t - c.bumpT > 1) { c.bumpT = state.t; Sfx.bump(); floatText(tmpV2.copy(c.pos).setY(2.5), '太小了，压不动！', 'dmg'); }
+        const inp = inputDir();
+        if (inp.mag > 0.2 && (inp.x * nx + inp.z * nz) < -0.3) { player.vel.y = PLAYER.climbSpeed * 0.9; c.wobble = 0.5; }
+        if (!c.bumpT || state.t - c.bumpT > 4) { c.bumpT = state.t; Sfx.bump(); if (!state.toldCar) { state.toldCar = true; floatText(tmpV2.copy(c.pos).setY(2.5), '往车上推 → 爬上去', ''); } }
       }
     }
   }
