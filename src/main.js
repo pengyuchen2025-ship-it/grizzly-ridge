@@ -6,8 +6,8 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { buildCity as buildCityScene } from './city.js?v=20261108101304';
-import { GAME, PLAYER, WAVES, CIVILIANS, POLICE, HELI, MODELS, TRAFFIC } from './config.js?v=20261108101304';
+import { buildCity as buildCityScene } from './city.js?v=20261108101839';
+import { GAME, PLAYER, WAVES, CIVILIANS, POLICE, HELI, MODELS, TRAFFIC } from './config.js?v=20261108101839';
 
 // ---------------------------------------------------------------- utils
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -63,10 +63,41 @@ scene.add(moon, moon.target);
 // ---------------------------------------------------------------- audio (synth, no files)
 // background music (user-provided track), loops; started on the first click so mobile browsers allow it
 const bgm = new Audio('assets/audio/bgm.mp3'); bgm.loop = true; bgm.preload = 'auto'; bgm.volume = 0.42;
+// recorded sound effects (CC0: OpenGameArt + BigSoundBank), fetched early, decoded when audio starts
+const SFX_FILES = {
+  eat: ['eat_1', 'eat_2', 'eat_3', 'eat_4'], crunch: ['crunch_1', 'crunch_2', 'crunch_3'], squish: ['squish_1', 'squish_2', 'squish_3', 'squish_4'],
+  roarBig: ['roar_big'], roar: ['roar_1', 'roar_2', 'roar_3', 'roar_4'], grunt: ['grunt_1', 'grunt_2', 'grunt_3'],
+  screamF: ['scream_f1', 'scream_f2', 'scream_f3', 'scream_f4', 'scream_f5'], screamM: ['scream_m1', 'scream_m2', 'scream_m3'],
+  shot: ['shot_1', 'shot_2'], boom: ['boom_1', 'boom_2'], boomTail: ['boom_tail'], glass: ['glass_1', 'glass_2', 'glass_3', 'glass_4', 'glass_5'],
+  siren: ['siren_loop'], heli: ['heli_loop'], rain: ['rain_loop'],
+};
+const sfxRaw = {};
+for (const list of Object.values(SFX_FILES)) for (const f of list) sfxRaw[f] = fetch(`assets/sfx/${f}.mp3`).then((r) => (r.ok ? r.arrayBuffer() : null)).catch(() => null);
 const Sfx = (() => {
   let ctx = null, master = null, dry = null, wet = null, noiseBuf = null, brownBuf = null, muted = false;
   let sirenNode = null, heliNode = null, breathNode = null;
   const last = {};
+  const B = {}; // decoded buffers by group
+  const synthOut = {};
+  async function decodeAll() {
+    for (const [group, list] of Object.entries(SFX_FILES)) for (const f of list) {
+      try { const ab = await sfxRaw[f]; if (!ab) continue; const buf = await ctx.decodeAudioData(ab.slice(0)); (B[group] = B[group] || []).push(buf); } catch (e) { console.warn('sfx decode failed', f); }
+    }
+    // swap the synthesized loops for the recorded ones
+    const loopTo = (group, dest, vol) => { if (!B[group]) return false; const src = ctx.createBufferSource(); src.buffer = B[group][0]; src.loop = true; const g = ctx.createGain(); g.gain.value = vol; src.connect(g); g.connect(dest); src.start(0, Math.random() * B[group][0].duration); return true; };
+    if (loopTo('siren', sirenNode, 1)) synthOut.siren.gain.value = 0;
+    if (loopTo('heli', heliNode, 1.4)) synthOut.heli.gain.value = 0;
+    if (loopTo('rain', dry, 0.35)) synthOut.rain.gain.value = 0;
+  }
+  // play a random sample from a group; returns false if not loaded yet (caller then falls back to synthesis)
+  function play(group, { vol = 0.5, rate = 1, send = 0.2, delay = 0, maxDur = 0 } = {}) {
+    const list = B[group]; if (!list || !list.length) return false;
+    const t = now() + delay, src = ctx.createBufferSource(); src.buffer = pick(list); src.playbackRate.value = rate;
+    const g = ctx.createGain(); g.gain.value = vol;
+    src.connect(g); out(g, send); src.start(t);
+    if (maxDur) { g.gain.setValueAtTime(vol, t + maxDur * 0.7); g.gain.linearRampToValueAtTime(0.0001, t + maxDur); src.stop(t + maxDur + 0.02); }
+    return true;
+  }
   const now = () => ctx.currentTime;
   const ok = (key, gap) => { if (!ctx || muted) return false; const t = now(); if (last[key] && t - last[key] < gap) return false; last[key] = t; return true; };
   function init() {
@@ -83,6 +114,7 @@ const Sfx = (() => {
       noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate); const n = noiseBuf.getChannelData(0); for (let i = 0; i < n.length; i++) n[i] = Math.random() * 2 - 1;
       brownBuf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate); const bd = brownBuf.getChannelData(0); let l = 0; for (let i = 0; i < bd.length; i++) { l = (l + 0.02 * (Math.random() * 2 - 1)) / 1.02; bd[i] = l * 3.5; }
       ambience();
+      decodeAll();
     } catch (e) { ctx = null; }
   }
   const out = (node, send = 0) => { node.connect(dry); if (send) { const g = ctx.createGain(); g.gain.value = send; node.connect(g); g.connect(wet); } };
@@ -149,7 +181,7 @@ const Sfx = (() => {
     // rain hiss + distant city rumble, always on
     const rain = ctx.createBufferSource(); rain.buffer = noiseBuf; rain.loop = true;
     const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 2500; const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 9000;
-    const rg = ctx.createGain(); rg.gain.value = 0.045; rain.connect(hp); hp.connect(lp); lp.connect(rg); rg.connect(dry); rain.start();
+    const rg = ctx.createGain(); rg.gain.value = 0.045; rain.connect(hp); hp.connect(lp); lp.connect(rg); rg.connect(dry); rain.start(); synthOut.rain = rg;
     const city = ctx.createBufferSource(); city.buffer = brownBuf; city.loop = true; const cl = ctx.createBiquadFilter(); cl.type = 'lowpass'; cl.frequency.value = 180;
     const cg = ctx.createGain(); cg.gain.value = 0.12; city.connect(cl); cl.connect(cg); cg.connect(dry); city.start();
     // monster breathing: slow wet rumble
@@ -159,17 +191,17 @@ const Sfx = (() => {
     // US police siren wail
     sirenNode = loopGain();
     const so = ctx.createOscillator(); so.type = 'triangle'; so.frequency.value = 950; const sl = ctx.createOscillator(); sl.frequency.value = 0.22; const sg = ctx.createGain(); sg.gain.value = 380; sl.connect(sg); sg.connect(so.frequency);
-    const sf = ctx.createBiquadFilter(); sf.type = 'lowpass'; sf.frequency.value = 2200; so.connect(sf); sf.connect(sirenNode); const ss = ctx.createGain(); ss.gain.value = 0.35; sirenNode.connect(ss); ss.connect(wet); so.start(); sl.start(); // reverb send follows the distance-based volume
+    const sf = ctx.createBiquadFilter(); sf.type = 'lowpass'; sf.frequency.value = 2200; const sOut = ctx.createGain(); synthOut.siren = sOut; sOut.connect(sirenNode); so.connect(sf); sf.connect(sOut); const ss = ctx.createGain(); ss.gain.value = 0.35; sirenNode.connect(ss); ss.connect(wet); so.start(); sl.start(); // reverb send follows the distance-based volume
     // helicopter rotor chop
-    heliNode = loopGain();
+    heliNode = loopGain(); const hOut = ctx.createGain(); synthOut.heli = hOut; hOut.connect(heliNode);
     // blade slap: noise gated by a sharp periodic pulse (whup-whup-whup)
     const hn = ctx.createBufferSource(); hn.buffer = noiseBuf; hn.loop = true; const hf = ctx.createBiquadFilter(); hf.type = 'lowpass'; hf.frequency.value = 650; hf.Q.value = 0.8;
     const ham = ctx.createGain(); ham.gain.value = 0;
     const pulse = ctx.createOscillator(); const real = new Float32Array(16), imag = new Float32Array(16); for (let k = 1; k < 16; k++) real[k] = Math.pow(0.82, k); pulse.setPeriodicWave(ctx.createPeriodicWave(real, imag));
     pulse.frequency.value = 12; const pg = ctx.createGain(); pg.gain.value = 0.55; pulse.connect(pg); pg.connect(ham.gain);
-    hn.connect(hf); hf.connect(ham); ham.connect(heliNode);
-    const thump = ctx.createOscillator(); thump.type = 'sine'; thump.frequency.value = 48; const tg = ctx.createGain(); tg.gain.value = 0; const pg2 = ctx.createGain(); pg2.gain.value = 0.8; pulse.connect(pg2); pg2.connect(tg.gain); thump.connect(tg); tg.connect(heliNode);
-    const whine = ctx.createOscillator(); whine.type = 'sawtooth'; whine.frequency.value = 1450; const wf = ctx.createBiquadFilter(); wf.type = 'bandpass'; wf.frequency.value = 1450; wf.Q.value = 12; const wg = ctx.createGain(); wg.gain.value = 0.05; whine.connect(wf); wf.connect(wg); wg.connect(heliNode);
+    hn.connect(hf); hf.connect(ham); ham.connect(hOut);
+    const thump = ctx.createOscillator(); thump.type = 'sine'; thump.frequency.value = 48; const tg = ctx.createGain(); tg.gain.value = 0; const pg2 = ctx.createGain(); pg2.gain.value = 0.8; pulse.connect(pg2); pg2.connect(tg.gain); thump.connect(tg); tg.connect(hOut);
+    const whine = ctx.createOscillator(); whine.type = 'sawtooth'; whine.frequency.value = 1450; const wf = ctx.createBiquadFilter(); wf.type = 'bandpass'; wf.frequency.value = 1450; wf.Q.value = 12; const wg = ctx.createGain(); wg.gain.value = 0.05; whine.connect(wf); wf.connect(wg); wg.connect(hOut);
     hn.start(); pulse.start(); thump.start(); whine.start();
   }
   return {
@@ -178,17 +210,19 @@ const Sfx = (() => {
     toggle() { muted = !muted; if (master) master.gain.value = muted ? 0 : 0.8; bgm.muted = muted; return muted; },
     // bone crunch + wet squelch + gulp + growl
     eat() { if (!ok('eat', 0.06)) return;
+      if (play('crunch', { vol: 0.75, rate: rand(0.85, 1.1) })) { play('squish', { vol: 0.7, rate: rand(0.8, 1.05), delay: 0.04 }); play('eat', { vol: 0.6, rate: rand(0.7, 0.9), delay: 0.12, send: 0.3 }); if (Math.random() < 0.45) play('roar', { vol: 0.55, rate: rand(0.6, 0.8), delay: 0.25, send: 0.35 }); return; }
       for (let i = 0; i < 4; i++) noise({ dur: 0.035, type: 'bandpass', freq: rand(1800, 3800), q: 3, vol: 0.5, delay: i * rand(0.02, 0.04), send: 0.1 });
       noise({ dur: 0.38, type: 'lowpass', freq: 1400, q: 9, to: 160, vol: 0.55, delay: 0.05, brown: true });
       tone({ freq: 190, to: 65, dur: 0.22, vol: 0.4, delay: 0.16, lp: 600 });
       if (Math.random() < 0.45) roar(rand(0.7, 1.0), 0.32, 0.2);
     },
-    squelch() { if (!ok('sq', 0.08)) return; noise({ dur: 0.3, type: 'lowpass', freq: 1100, q: 8, to: 180, vol: 0.4, brown: true }); },
+    squelch() { if (!ok('sq', 0.08)) return; if (play('squish', { vol: 0.5, rate: rand(0.8, 1.1) })) return; noise({ dur: 0.3, type: 'lowpass', freq: 1100, q: 8, to: 180, vol: 0.4, brown: true }); },
     // gunshot: sharp crack + body thump + street echo (rate-limited so a squad doesn't turn into noise)
-    shot(vol = 0.3) { if (!ok('shot', 0.07)) return; const v = clamp(vol * 2.2, 0.08, 0.7);
+    shot(vol = 0.3) { if (!ok('shot', 0.07)) return; const v = clamp(vol * 2.2, 0.08, 0.7); if (play('shot', { vol: v * 0.9, rate: rand(0.92, 1.08), send: 0.5 })) return;
       noise({ dur: 0.05, type: 'highpass', freq: 1800, vol: v, send: 0.55 }); noise({ dur: 0.12, type: 'lowpass', freq: 900, to: 200, vol: v * 0.7, brown: true, send: 0.4 }); tone({ freq: 140, to: 50, dur: 0.1, vol: v * 0.6, send: 0.3 }); },
     // explosion: sub thump + roaring body + crackle + debris falling
     boom() { if (!ok('boom', 0.12)) return;
+      if (play('boom', { vol: 1.0, rate: rand(0.55, 0.7), send: 0.4 })) { play('boomTail', { vol: 0.9, rate: rand(0.85, 1.0), send: 0.4 }); tone({ freq: 65, to: 28, dur: 1.2, vol: 0.7, attack: 0.004, send: 0.2 }); return; }
       tone({ freq: 70, to: 28, dur: 1.3, vol: 0.9, attack: 0.004, send: 0.3 });
       noise({ dur: 1.9, type: 'lowpass', freq: 1800, to: 70, vol: 0.9, brown: true, send: 0.5 });
       noise({ dur: 0.25, type: 'highpass', freq: 1200, vol: 0.5, send: 0.4 });
@@ -196,6 +230,7 @@ const Sfx = (() => {
       for (let i = 0; i < 6; i++) tone({ freq: rand(2500, 5200), dur: rand(0.05, 0.12), vol: 0.05, type: 'triangle', delay: rand(0.5, 1.4), send: 0.4 }); },
     // glass: shatter burst + tinkles (rate-limited while climbing)
     glass() { if (!ok('glass', 0.22)) return;
+      if (play('glass', { vol: 0.55, rate: rand(0.9, 1.15), send: 0.35 })) return;
       noise({ dur: 0.03, type: 'highpass', freq: 2500, vol: 0.55, send: 0.3 });                 // impact crack
       noise({ dur: 0.35, type: 'bandpass', freq: 6000, q: 0.8, to: 3500, vol: 0.28, delay: 0.01, send: 0.45 }); // shatter wash
       const n = randi(9, 14);
@@ -209,9 +244,9 @@ const Sfx = (() => {
       tone({ freq: 85, to: 32, dur: 0.45 + p * 0.25, vol: 0.55 + p * 0.25, send: 0.3 });
       noise({ dur: 0.5 + p * 0.3, type: 'lowpass', freq: 700, to: 90, vol: 0.45 + p * 0.25, brown: true, send: 0.35 });
       for (let i = 0; i < 5; i++) noise({ dur: 0.04, type: 'bandpass', freq: rand(600, 2200), q: 2, vol: 0.15, delay: rand(0.08, 0.5) }); },
-    jump() { if (!ok('jump', 0.1)) return; noise({ dur: 0.3, type: 'bandpass', freq: 350, q: 1.2, to: 1400, vol: 0.25, send: 0.1 }); },
-    roar(v = 0.45) { if (!ok('roar', 1.2)) return; roar(rand(0.9, 1.3), v); },
-    scream(female, vol = 0.22, short = false) { if (!ok('scream', short ? 0.05 : 0.28)) return; scream(female, vol, short); },
+    jump() { if (!ok('jump', 0.1)) return; play('grunt', { vol: 0.45, rate: rand(0.6, 0.75), send: 0.2 }); noise({ dur: 0.3, type: 'bandpass', freq: 350, q: 1.2, to: 1400, vol: 0.25, send: 0.1 }); },
+    roar(v = 0.45) { if (!ok('roar', 1.2)) return; if (play(Math.random() < 0.5 ? 'roarBig' : 'roar', { vol: v * 1.6, rate: rand(0.75, 0.95), send: 0.45, maxDur: 2.4 })) return; roar(rand(0.9, 1.3), v); },
+    scream(female, vol = 0.22, short = false) { if (!ok('scream', short ? 0.05 : 0.28)) return; if (play(female ? 'screamF' : 'screamM', { vol: vol * 1.8, rate: rand(0.92, 1.1), send: 0.35, maxDur: short ? 0.4 : 0 })) return; scream(female, vol, short); },
     hit() { if (!ok('hit', 0.09)) return; noise({ dur: 0.07, type: 'lowpass', freq: 1200, q: 3, to: 300, vol: 0.35, brown: true }); tone({ freq: 220, to: 120, dur: 0.06, vol: 0.12 }); },
     bump() { if (!ok('bump', 0.15)) return; tone({ freq: 150, to: 85, dur: 0.14, vol: 0.3, type: 'square', lp: 900 }); noise({ dur: 0.12, type: 'bandpass', freq: 900, q: 4, vol: 0.25 }); },
     carAlarm() { if (!ok('alarm', 1)) return; for (let i = 0; i < 6; i++) tone({ freq: i % 2 ? 1300 : 950, dur: 0.18, vol: 0.12, type: 'square', delay: i * 0.2, lp: 2500, send: 0.4 }); },
