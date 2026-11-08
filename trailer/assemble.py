@@ -166,9 +166,8 @@ def decode(path, start=0.0, dur=None, ch=2):
     a = np.frombuffer(subprocess.run(cmd, capture_output=True).stdout, np.float32)
     return a.reshape(-1, ch).copy()
 N = int(DUR * SR) + 1
-mix_bgm = np.zeros((N, 2), np.float32); mix_sfx = np.zeros((N, 2), np.float32)
+mix_bgm = np.zeros((N, 2), np.float32); mix_sfx = np.zeros((N, 2), np.float32); mix_bed = np.zeros((N, 2), np.float32)
 bgm = decode(BGM, BGM_OFFSET, DUR)[:N]; mix_bgm[:len(bgm)] = bgm
-bgm_pk = np.abs(mix_bgm).max() or 1; mix_bgm /= bgm_pk
 fo = int(2.6 * SR); mix_bgm[N - fo:] *= np.linspace(1, 0, fo)[:, None] ** 1.5
 
 SFXDIR = os.path.join(REPO, 'assets/sfx'); _cache = {}
@@ -231,7 +230,7 @@ def loop_bed(group, t0, n_frames, levels, gain):
     seg = np.concatenate([a] * (need // len(a) + 3))[start:start + need]
     env = np.interp(np.arange(need) / SR * FPS, np.arange(len(levels)), levels) * gain
     k = min(need, 600); env[:k] *= np.linspace(0, 1, k); env[-k:] *= np.linspace(1, 0, k)
-    i0 = int(t0 * SR); i1 = min(N, i0 + need); mix_sfx[i0:i1] += seg[:i1 - i0] * env[:i1 - i0, None]
+    i0 = int(t0 * SR); i1 = min(N, i0 + need); mix_bed[i0:i1] += seg[:i1 - i0] * env[:i1 - i0, None]
 
 # per-shot loudness of the game's own events (the establishing shot stays distant) + hand-placed accents (seconds from segment start)
 SEG_GAIN = {'aerial': 0.45}
@@ -278,17 +277,24 @@ for s in segs:
     for grp, at, vol, rate, md in accents(s):
         if at is not None and at > -0.05: place(grp, t0 + max(0, at), vol, rate, md, end=end)
 
-# BGM ducks under the sound effects (fast attack, slow release), so screams and explosions cut through
-env = np.abs(mix_sfx).max(1)
-blk = 441; nb = len(env) // blk + 1
-lvl = np.array([env[i * blk:(i + 1) * blk].max() if i * blk < len(env) else 0 for i in range(nb)])
-sm = np.zeros(nb); a_att, a_rel = 0.6, 0.06
-for i in range(nb): prev = sm[i - 1] if i else 0; sm[i] = prev + (lvl[i] - prev) * (a_att if lvl[i] > prev else a_rel)
-duck = 1 - 0.55 * np.clip(sm / 0.8, 0, 1)
-duck = np.interp(np.arange(N), np.arange(nb) * blk, duck).astype(np.float32)
-mix = mix_bgm * 0.62 * duck[:, None] + mix_sfx * 0.9
-mix = np.tanh(mix * 1.15) / np.tanh(1.15)  # soft limiter
-np.save(os.path.join(BUILD, 'stems.npy'), np.stack([(mix_bgm * 0.62 * duck[:, None]).mean(1), (mix_sfx * 0.9).mean(1)])[:, ::10])  # for level checks
+# 背景音乐是主角：BGM 保持原始音量、不做任何压低；音效作为点缀放在下面，
+# 并且每一小段时间里音效的响度都保持比 BGM 低至少 SFX_UNDER_DB，超过就自动压下去
+BGM_GAIN, SFX_GAIN, BED_GAIN, SFX_UNDER_DB = 0.9, 0.5, 0.5, 6.0
+music = mix_bgm * BGM_GAIN
+fx = mix_sfx * SFX_GAIN + mix_bed * BED_GAIN
+win = int(0.05 * SR)  # 50 ms windows
+def rms_env(x):
+    p = (x ** 2).mean(1); n = len(p) // win + 1
+    r = np.sqrt(np.array([p[i * win:(i + 1) * win].mean() if i * win < len(p) else 0 for i in range(n)]))
+    return np.convolve(r, np.ones(5) / 5, 'same')  # smooth over ~250 ms
+m_env, f_env = rms_env(music), rms_env(fx)
+cap = np.maximum(m_env, 0.02) * 10 ** (-SFX_UNDER_DB / 20)  # quiet intro: allow a small floor so sounds are still audible
+g = np.minimum(1, cap / np.maximum(f_env, 1e-6))
+g = np.interp(np.arange(N), np.arange(len(g)) * win + win / 2, g).astype(np.float32)
+fx = fx * g[:, None]
+mix = music + fx
+mix = np.tanh(mix * 1.05) / np.tanh(1.05)  # soft limiter
+np.save(os.path.join(BUILD, 'stems.npy'), np.stack([music.mean(1), fx.mean(1)])[:, ::10])  # for level checks
 wav = os.path.join(BUILD, 'audio.wav')
 subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'f32le', '-ar', str(SR), '-ac', '2', '-i', '-', wav], input=mix.astype(np.float32).tobytes(), check=True)
 final = os.path.join(BUILD, 'grizzly_ridge_trailer.mp4')
